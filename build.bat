@@ -56,6 +56,7 @@ echo Outputs:
 if exist "%ROOT%build\win-x64\tempctl.dll" echo   build\win-x64\tempctl.dll
 if exist "%ROOT%build\win-x86\tempctl.dll" echo   build\win-x86\tempctl.dll
 if exist "%ROOT%build\linux-x64\libtempctl.so" echo   build\linux-x64\libtempctl.so
+if exist "%ROOT%build\linux-arm64\libtempctl.so" echo   build\linux-arm64\libtempctl.so
 exit /b 0
 
 :: ---- subroutine: MSVC build for one architecture -------------------------

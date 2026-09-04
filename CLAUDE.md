@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+**Start with `docs/HANDOFF-2026-09-04.md`**: the project is being split into
+CanTp (generic transport DLL, new repo `can-tp-dll`) and TempCtl v2; that file
+holds every decision from the owner and Scott, the API drafts and the kickoff
+checklist. What follows describes the v1.0 code as shipped.
+
 Temperature controller + J1939 BAM / NI-XNET raw-frame encoder for LabVIEW
 CLFN. Plain C99, one source tree -> tempctl.dll (x64 + x86, MSVC) and
 libtempctl.so (x86_64 NI Linux RT, zig cross-compile, target cRIO-9045).
@@ -7,7 +12,7 @@ libtempctl.so (x86_64 NI Linux RT, zig cross-compile, target cRIO-9045).
 ## Build / verify / package
 
 ```bat
-build.bat all              :: dll x64+x86, run 154-check gates on both, .so + linux test binary
+build.bat all              :: dll x64+x86, run 154-check gates on both, .so + test binary for linux-x64 and linux-arm64
 python tests\oracle_test.py   :: cantools + pretty_j1939 oracle (pip install cantools pretty_j1939)
 package_dist.bat 1.0.0 [pw]   :: dist\TempCtl_v1.0.0{,.zip,_unencrypted.zip}; refuses failing gates
 ```
