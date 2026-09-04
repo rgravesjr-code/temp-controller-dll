@@ -9,7 +9,7 @@ if "%MODE%"=="" set "MODE=all"
 set "BLIB=tempctl"
 set "BTEST=test_tempctl"
 set "BDEFINE=TEMPCTL_BUILD"
-set "BSRCS="%ROOT%src\tempctl.c" "%ROOT%src\j1939.c" "%ROOT%src\canpack.c""
+set "BSRCS="%ROOT%src\tempctl.c""
 
 set "VCVARS="
 for %%d in ("%ProgramFiles(x86)%\Microsoft Visual Studio\18\BuildTools" "%ProgramFiles%\Microsoft Visual Studio\18\Community" "%ProgramFiles%\Microsoft Visual Studio\2022\Community" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools") do (

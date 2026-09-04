@@ -1,0 +1,37 @@
+CanTp v1.0.0 release-gate log, captured by package_dist.bat
+
+============ x64 gate ============
+177 passed, 0 failed
+ 
+============ x86 gate ============ 
+177 passed, 0 failed
+ 
+============ Python oracle (cantools + pretty_j1939) against cantp.dll ============ 
+(a) single-signal layouts: 3000 compared, ok
+(b) multi-signal messages: 300 compared, ok
+(c) EEC1: 8 bytes, 8 signals, 20 random value sets
+(c) EC1: 40 bytes, 28 signals, 20 random value sets
+(c) RC: 19 bytes, 14 signals, 20 random value sets
+(c) ET1: 8 bytes, 6 signals, 20 random value sets
+(c) TCFG: 50 bytes, 26 signals, 20 random value sets
+(c) real DBC messages: ok
+(d) BAM lengths: ok
+library version 0x010000
+ALL OK
+ 
+============ example tables from J1939_NGHD_V130.dbc (EC1, EEC1, RC) ============ 
+EC1: id 0x18fee3fe len 40 j1939_bam 28 signals
+EEC1: id 0xcf004fe len 8 classic 8 signals
+RC: id 0x18fee1fe len 19 j1939_bam 14 signals
+3 message(s) written to C:\CodeProjects\can-tp-dll\dist\CanTp_v1.0.0\examples\tables
+ 
+============ Linux / Raspberry Pi log, pasted from CANTP_PI_LOG ============ 
+pi-engine (Raspberry Pi 5, aarch64, Debian GLIBC 2.41), 2026-09-04
+$ /tmp/test_cantp
+177 passed, 0 failed
+$ /home/pi/j1939sim-venv/bin/python /tmp/pi_bus_loop.py --so /tmp/libcantp.so --iface can1 --rounds 3
+libcantp 0x010000, message PGN 0xff10 SA 0x80: 7 frames per message
+round 0: ok  sent [20.5, 21.0, 5000, -7, 1, 2, 1.5, -12.3, 200]  got [20.5, 21.0, 5000.0, -7.0, 1.0, 2.0, 1.5, -12.3, 200.0]  (351 ms on can1)
+round 1: ok  sent [21.5, 20.0, 5001, -6, 1, 2, 3.0, -12.3, 201]  got [21.5, 20.0, 5001.0, -6.0, 1.0, 2.0, 3.0, -12.3, 201.0]  (351 ms on can1)
+round 2: ok  sent [22.5, 19.0, 5002, -5, 1, 2, 4.5, -12.3, 202]  got [22.5, 19.0, 5002.0, -5.0, 1.0, 2.0, 4.5, -12.3, 202.0]  (351 ms on can1)
+ALL OK

@@ -1,0 +1,14 @@
+RetarderType	
+RetarderLocation	
+RetarderCtrlMethod	steps
+RetarderSpeedAtIdlePoint1	rpm
+PercentTorqueAtIdlePoint1	%
+MaxRetarderSpeedPoint2	rpm
+PercentTorqueAtMaxSpeedPoint2	%
+RetarderSpeedAtPoint3	rpm
+PercentTorqueAtPoint3	%
+RetarderSpeedAtPoint4	rpm
+PercentTorqueAtPoint4	%
+RetarderSpeedAtPeakTorquePoint5	rpm
+ReferenceRetarderTorque	Nm
+PercentTorqueAtPeakTorquePoint5	%

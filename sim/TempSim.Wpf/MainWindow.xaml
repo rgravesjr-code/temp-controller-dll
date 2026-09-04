@@ -1,0 +1,116 @@
+<Window x:Class="TempSim.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TempSim.Wpf"
+        Title="TempSim - TempCtl v2 + CanTp simulator" Width="1380" Height="900" MinWidth="1000" MinHeight="650"
+        Background="#F4F4F4" Closing="OnClosing">
+    <DockPanel>
+        <!-- toolbar -->
+        <Border DockPanel.Dock="Top" Background="#E8E8E8" Padding="6,4" BorderBrush="#CCC" BorderThickness="0,0,0,1">
+            <DockPanel>
+                <TextBlock x:Name="VersionText" DockPanel.Dock="Right" VerticalAlignment="Center" Foreground="DimGray" Margin="8,0"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="RunButton" Content="Pause" Width="70" Margin="0,0,4,0" Click="OnRunPause"/>
+                    <Button Content="Reset (operator)" Width="110" Margin="0,0,4,0" Click="OnReset" ToolTip="TcStep action 2: clears latched faults and timers, keeps filters"/>
+                    <Button Content="Restart (Init)" Width="90" Margin="0,0,12,0" Click="OnRestart" ToolTip="Fresh plant and TcStep action 0"/>
+                    <Label Content="Speed:"/>
+                    <ComboBox x:Name="SpeedCombo" Width="70" SelectedIndex="0" SelectionChanged="OnSpeedChanged">
+                        <ComboBoxItem Content="1x"/><ComboBoxItem Content="5x"/><ComboBoxItem Content="20x"/><ComboBoxItem Content="max"/>
+                    </ComboBox>
+                    <Label Content="Scenario:" Margin="12,0,0,0"/>
+                    <ComboBox x:Name="ScenarioCombo" Width="160"/>
+                    <Button Content="Load" Width="60" Margin="4,0" Click="OnLoadScenario" ToolTip="Restart with the scenario's settings and timed events"/>
+                    <TextBlock x:Name="EventText" VerticalAlignment="Center" Margin="12,0" Foreground="#A05000"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- frames panel -->
+        <Border DockPanel.Dock="Bottom" Height="210" Background="White" BorderBrush="#CCC" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="4"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <DockPanel Grid.Column="0" Margin="6,2">
+                    <TextBlock x:Name="FramesTitle" DockPanel.Dock="Top" Text="NI-XNET raw frames (CanTp_PackSgl): J1939 BAM" FontWeight="SemiBold" Margin="0,2"/>
+                    <TextBox x:Name="FramesText" FontFamily="Consolas" FontSize="11.5" IsReadOnly="True" BorderThickness="0"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#FAFAFA"/>
+                </DockPanel>
+                <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="#DDD"/>
+                <DockPanel Grid.Column="2" Margin="6,2">
+                    <TextBlock DockPanel.Dock="Top" Text="Decoded on the receive side (CanTp_Unpack of the same records)" FontWeight="SemiBold" Margin="0,2"/>
+                    <ListView x:Name="DecodedList" FontSize="11.5" BorderThickness="0">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="#" Width="28" DisplayMemberBinding="{Binding Index}"/>
+                                <GridViewColumn Header="Signal" Width="130" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Controller" Width="90" DisplayMemberBinding="{Binding Value}"/>
+                                <GridViewColumn Header="Unpacked" Width="90" DisplayMemberBinding="{Binding Unpacked}"/>
+                                <GridViewColumn Header="Unit" Width="50" DisplayMemberBinding="{Binding Unit}"/>
+                                <GridViewColumn Header="Bits" Width="70" DisplayMemberBinding="{Binding Bits}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <!-- right: status + settings -->
+        <ScrollViewer DockPanel.Dock="Right" Width="380" VerticalScrollBarVisibility="Auto" Background="#F4F4F4">
+            <StackPanel Margin="6">
+                <GroupBox Header="Controller status">
+                    <StackPanel>
+                        <TextBlock x:Name="StatusText" FontSize="20" FontWeight="Bold" Margin="2"/>
+                        <TextBlock x:Name="ControlTempText" FontSize="12" Margin="2" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="ErrorText" Foreground="#B00000" TextWrapping="Wrap" Margin="2"/>
+                        <Grid Margin="2,4">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                            <Label Grid.Row="0" Content="Error countdown"/>
+                            <ProgressBar Grid.Row="0" Grid.Column="1" x:Name="ErrorBar" Height="14" Foreground="#D04000"/>
+                            <TextBlock Grid.Row="0" Grid.Column="2" x:Name="ErrorRemainText" VerticalAlignment="Center" Margin="6,0"/>
+                            <Label Grid.Row="1" Content="Deadband countdown"/>
+                            <ProgressBar Grid.Row="1" Grid.Column="1" x:Name="DbBar" Height="14" Foreground="#2060C0"/>
+                            <TextBlock Grid.Row="1" Grid.Column="2" x:Name="DbRemainText" VerticalAlignment="Center" Margin="6,0"/>
+                        </Grid>
+                        <UniformGrid Columns="4" Margin="2">
+                            <local:Lamp x:Name="HeatLamp" Caption="Heating cmd" OnBrush="#E03C1E"/>
+                            <local:Lamp x:Name="CoolLamp" Caption="Cooling cmd" OnBrush="#2878F0"/>
+                            <local:Lamp x:Name="HeatFbLamp" Caption="Heater fb" OnBrush="#E03C1E"/>
+                            <local:Lamp x:Name="CoolFbLamp" Caption="Cooler fb" OnBrush="#2878F0"/>
+                        </UniformGrid>
+                        <TextBlock x:Name="SensorText" Margin="2"/>
+                    </StackPanel>
+                </GroupBox>
+                <GroupBox Header="Controller configuration (live, every tick)">
+                    <StackPanel x:Name="ControllerPanel"/>
+                </GroupBox>
+                <GroupBox Header="Plant">
+                    <StackPanel x:Name="PlantPanel"/>
+                </GroupBox>
+                <GroupBox Header="Sensor 1 (primary)">
+                    <StackPanel x:Name="Sensor1Panel"/>
+                </GroupBox>
+                <GroupBox Header="Sensor 2">
+                    <StackPanel x:Name="Sensor2Panel"/>
+                </GroupBox>
+                <GroupBox Header="Relays (feedback contacts)">
+                    <StackPanel x:Name="RelayPanel"/>
+                </GroupBox>
+                <GroupBox Header="Logging">
+                    <StackPanel>
+                        <CheckBox x:Name="LogCheck" Content="Write CSV + .ncl while running" Checked="OnLogChanged" Unchecked="OnLogChanged"/>
+                        <TextBlock x:Name="LogText" Foreground="DimGray" TextWrapping="Wrap" Margin="2"/>
+                    </StackPanel>
+                </GroupBox>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- centre: plot -->
+        <Border Background="White" BorderBrush="#CCC" BorderThickness="1" Margin="6">
+            <local:PlotView x:Name="Plot"/>
+        </Border>
+    </DockPanel>
+</Window>

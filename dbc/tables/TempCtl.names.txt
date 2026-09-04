@@ -1,0 +1,27 @@
+Setpoint	degC
+DeadbandHi	degC
+DeadbandLo	degC
+HiLimit	degC
+LoLimit	degC
+ErrorTimeoutMs	ms
+DeadbandTimeoutMs	ms
+FilterPoints	
+Temp2Enable	
+Temp2Tolerance	degC
+FeedbackEnable	
+Temp1	degC
+Temp2	degC
+HeaterFeedback	
+CoolerFeedback	
+HeatingCmd	
+CoolingCmd	
+ErrorStatus	
+TempStatus	
+ControlTemp	degC
+Temp1Filtered	degC
+Temp2Filtered	degC
+HiBand	degC
+LoBand	degC
+ErrorRemainMs	ms
+DbRemainMs	ms
+ActiveSensor	

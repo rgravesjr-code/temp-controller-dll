@@ -1,0 +1,52 @@
+﻿cantp v1.0.0 dependency report (generated at package time)
+
+cantp.dll  [x64]
+  imports KERNEL32.dll
+  -> operating-system DLLs only; no VC++ runtime
+
+x86\cantp.dll  [x86]
+  imports KERNEL32.dll
+  -> operating-system DLLs only; no VC++ runtime
+
+test_cantp.exe  [x64]
+  imports KERNEL32.dll
+  -> operating-system DLLs only; no VC++ runtime
+
+x86\test_cantp.exe  [x86]
+  imports KERNEL32.dll
+  -> operating-system DLLs only; no VC++ runtime
+
+linux-x64\libcantp.so  [ELF]
+  type DYN machine x86_64
+  NEEDED libc.so.6
+  SONAME libcantp.so
+  EXPORTS ['CanTp_Clear', 'CanTp_Define', 'CanTp_FrameCount', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_SignalCount', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
+  IMPORTS ['memcpy', 'memset']
+  GLIBC_VERSIONS_NEEDED ['GLIBC_2.14', 'GLIBC_2.2.5']
+  -> libc only
+
+linux-x64\test_cantp  [ELF]
+  type EXEC machine x86_64
+  NEEDED libc.so.6
+  EXPORTS []
+  IMPORTS ['__libc_start_main', 'memcpy', 'memset', 'printf']
+  GLIBC_VERSIONS_NEEDED ['GLIBC_2.14', 'GLIBC_2.2.5']
+  -> libc only
+
+linux-arm64\libcantp.so  [ELF]
+  type DYN machine AArch64
+  NEEDED libc.so.6
+  SONAME libcantp.so
+  EXPORTS ['CanTp_Clear', 'CanTp_Define', 'CanTp_FrameCount', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_SignalCount', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
+  IMPORTS ['memcpy', 'memset']
+  GLIBC_VERSIONS_NEEDED ['GLIBC_2.17']
+  -> libc only
+
+linux-arm64\test_cantp  [ELF]
+  type EXEC machine AArch64
+  NEEDED libc.so.6
+  EXPORTS []
+  IMPORTS ['__libc_start_main', 'abort', 'memcpy', 'memset', 'printf']
+  GLIBC_VERSIONS_NEEDED ['GLIBC_2.17']
+  -> libc only
+

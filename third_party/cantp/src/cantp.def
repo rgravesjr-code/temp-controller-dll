@@ -1,0 +1,19 @@
+LIBRARY cantp
+EXPORTS
+    CanTp_Version
+    CanTp_Define
+    CanTp_Clear
+    CanTp_SignalCount
+    CanTp_PayloadLength
+    CanTp_FrameCount
+    CanTp_OutputSize
+    CanTp_Pack
+    CanTp_PackSgl
+    CanTp_Unpack
+    CanTp_UnpackSgl
+    CanTp_RxFeed
+    CanTp_RxReset
+    CanTp_RecordSize
+    CanTp_RecordSizeFor
+    CanTp_MakeRecord
+    CanTp_NclHeader

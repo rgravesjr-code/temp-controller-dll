@@ -1,18 +1,19 @@
 /*
- * tempctl.h - Temperature controller + J1939 BAM / NI-XNET raw frame encoder
+ * tempctl.h - TempCtl v2: temperature controller for LabVIEW CLFN
  *
- * Plain C99, no dependencies beyond <string.h>. Builds as tempctl.dll (Windows)
- * and libtempctl.so (NI Linux RT x64, cRIO-9045). All exports use the C calling
- * convention (cdecl); on x64 that is the only convention, so LabVIEW's Call
- * Library Function Node must be set to "C" calling convention.
+ * Plain C99, no dependencies beyond <string.h>. Builds as tempctl.dll (Windows
+ * x64/x86) and libtempctl.so (Linux x86_64 for cRIO-904x/905x/906x, aarch64
+ * for Raspberry Pi). All exports use the C calling convention (cdecl).
+ *
+ * The controller is pure signals in, signals out: it owns no hardware and no
+ * CAN. The caller maps thermocouples and relays to the array below; the
+ * output array is laid out so that it can be handed straight to CanTp
+ * (CanTp_PackSgl) with the message definition generated from
+ * tools/make_tempctl_dbc.py, without reordering.
  *
  * LabVIEW CLFN mapping:
  *   const float* / float*    -> Array Data Pointer of SGL, plus an I32 length
- *   const double*            -> Array Data Pointer of DBL
- *   uint8_t*                 -> Array Data Pointer of U8
- *   int32_t*                 -> Pointer to Value (I32)
  *   int32_t / uint32_t       -> Numeric, Value
- *   uint64_t                 -> Numeric U64, Value
  *
  * Return value of every function is TC_OK (0), a negative TC_ERR_* code, or a
  * positive TC_WARN_* code (call succeeded, but something is worth a look).
@@ -39,185 +40,165 @@ extern "C" {
 /* ------------------------------------------------------------------------ */
 /* Version                                                                   */
 /* ------------------------------------------------------------------------ */
-#define TC_VERSION_MAJOR 1
+#define TC_VERSION_MAJOR 2
 #define TC_VERSION_MINOR 0
 #define TC_VERSION_PATCH 0
 /* Returns (major << 16) | (minor << 8) | patch. */
 TC_API uint32_t TcVersion(void);
+/* Number of elements the `in` array must have (TC_INPUT_COUNT). */
+TC_API int32_t TcInputCount(void);
+/* Number of elements the `out` array must have (TC_SIGNAL_COUNT). */
+TC_API int32_t TcSignalCount(void);
 
 /* ------------------------------------------------------------------------ */
 /* Return codes                                                              */
 /* ------------------------------------------------------------------------ */
 #define TC_OK                 0
-#define TC_WARN_CONFIG        1   /* init/step: config not LoLimit < LoDeadband <= Setpoint <= HiDeadband < HiLimit, or negative timeout */
-#define TC_ERR_ARG           -1   /* null pointer or bad length                */
-#define TC_ERR_ZONE          -2   /* zone index out of range                   */
-#define TC_ERR_ACTION        -3   /* unknown action                            */
-#define TC_ERR_NOT_INIT      -4   /* step called before init                   */
-#define TC_ERR_BUFFER        -5   /* output buffer too small; *bytesWritten = need */
-#define TC_ERR_PAYLOAD       -6   /* payload > 1785 bytes (J1939 TP limit)     */
-#define TC_ERR_SIGDEF        -7   /* generic packer: bad signal definition     */
-#define TC_ERR_FRAMEDEF      -8   /* generic packer: bad frame definition      */
+#define TC_WARN_CONFIG        1   /* init/step: configuration inconsistent (see TC_ERRBIT_CONFIG); the call still ran */
+#define TC_ERR_ARG           -1   /* null pointer or array too short          */
+#define TC_ERR_ZONE          -2   /* zone index out of range                  */
+#define TC_ERR_ACTION        -3   /* unknown action                           */
+#define TC_ERR_NOT_INIT      -4   /* step called before init                  */
 
 /* ------------------------------------------------------------------------ */
-/* Temperature controller                                                    */
+/* Signal array                                                              */
 /* ------------------------------------------------------------------------ */
-
-/* Signal order in the SGL array, in and out. */
+/*
+ * One SGL array in, one SGL array out. Elements 0..TC_INPUT_COUNT-1 are read
+ * from `in` on every call (configuration is live: a change takes effect on
+ * the next Step, no re-Init). All of them are echoed to `out`, followed by
+ * the controller's own outputs. `in` and `out` may be the same array.
+ */
 enum TcSignal {
-    TC_HI_LIMIT        = 0,  /* deg, above this for ErrorTimeout ms -> fault 1 */
-    TC_LO_LIMIT        = 1,  /* deg, below this for ErrorTimeout ms -> fault 2 */
-    TC_HI_DEADBAND     = 2,  /* deg, absolute; above for DeadbandTimeout -> cool */
-    TC_LO_DEADBAND     = 3,  /* deg, absolute; below for DeadbandTimeout -> heat */
-    TC_SETPOINT        = 4,  /* deg, heat/cool run until temp reaches this     */
-    TC_ACTUAL_TEMP     = 5,  /* deg, measured                                  */
-    TC_ERROR_TIMEOUT   = 6,  /* ms                                             */
-    TC_DEADBAND_TIMEOUT= 7,  /* ms                                             */
-    TC_COOLING_ACTIVE  = 8,  /* 0/1 (in: initial state at init; out: relay)    */
-    TC_HEATING_ACTIVE  = 9,  /* 0/1 (in: initial state at init; out: relay)    */
-    TC_ERROR_STATUS    = 10, /* out: 0 none, 1 hi limit, 2 lo limit, 3 bad reading */
-    TC_SIGNAL_COUNT    = 11,
-    /* Optional extra outputs, written only when outLen >= TC_SIGNAL_COUNT_EXT */
-    TC_ERROR_REMAIN_MS = 11, /* remaining error countdown, 0 when not counting */
-    TC_DB_REMAIN_MS    = 12, /* remaining deadband countdown, 0 when idle      */
-    TC_SIGNAL_COUNT_EXT= 13
+    /* --- configuration ------------------------------------------------ */
+    TC_SETPOINT          = 0,  /* deg. Heating runs until >= Setpoint, cooling until <= Setpoint  */
+    TC_DEADBAND_HI       = 1,  /* deg, offset >= 0: HiBand = Setpoint + DeadbandHi                 */
+    TC_DEADBAND_LO       = 2,  /* deg, offset >= 0: LoBand = Setpoint - DeadbandLo                 */
+    TC_HI_LIMIT          = 3,  /* deg. A sensor above this for ErrorTimeout ms has failed (hi)     */
+    TC_LO_LIMIT          = 4,  /* deg. A sensor below this for ErrorTimeout ms has failed (lo)     */
+    TC_ERROR_TIMEOUT     = 5,  /* ms. Limit / bad-reading / disagreement / feedback countdown     */
+    TC_DEADBAND_TIMEOUT  = 6,  /* ms. Time outside the band before a relay engages                */
+    TC_FILTER_POINTS     = 7,  /* 1..64 samples in the moving average of each sensor (0 -> 4)     */
+    TC_TEMP2_ENABLE      = 8,  /* 0/1. Second sensor present: rationality check + failover        */
+    TC_TEMP2_TOLERANCE   = 9,  /* deg. |Temp1f - Temp2f| above this for ErrorTimeout -> disagree  */
+    TC_FEEDBACK_ENABLE   = 10, /* 0/1. Compare relay feedback inputs with the commands             */
+    /* --- measurements ------------------------------------------------- */
+    TC_TEMP1             = 11, /* deg, sensor 1 (the primary)                                     */
+    TC_TEMP2             = 12, /* deg, sensor 2 (ignored unless Temp2Enable)                      */
+    TC_HEATER_FEEDBACK   = 13, /* 0/1 measured heater relay state (ignored unless FeedbackEnable) */
+    TC_COOLER_FEEDBACK   = 14, /* 0/1 measured cooler relay state                                 */
+    /* --- relay commands: in = initial state (Init only), out = command -- */
+    TC_HEATING_CMD       = 15, /* 0/1                                                             */
+    TC_COOLING_CMD       = 16, /* 0/1                                                             */
+    TC_INPUT_COUNT       = 17,
+    /* --- outputs only ------------------------------------------------- */
+    TC_ERROR_STATUS      = 17, /* bit mask, TC_ERRBIT_*                                           */
+    TC_TEMP_STATUS       = 18, /* TcTempStatus                                                    */
+    TC_CONTROL_TEMP      = 19, /* deg, filtered value of the active sensor that drives control   */
+    TC_TEMP1_FILTERED    = 20, /* deg, moving average of Temp1 (NaN until a valid sample exists) */
+    TC_TEMP2_FILTERED    = 21, /* deg, moving average of Temp2 (NaN when disabled / no sample)   */
+    TC_HI_BAND           = 22, /* deg, Setpoint + DeadbandHi                                      */
+    TC_LO_BAND           = 23, /* deg, Setpoint - DeadbandLo                                      */
+    TC_ERROR_REMAIN_MS   = 24, /* ms, smallest running error countdown, 0 when none is running   */
+    TC_DB_REMAIN_MS      = 25, /* ms, remaining deadband countdown, 0 when idle or running       */
+    TC_ACTIVE_SENSOR     = 26, /* 1 or 2: the sensor whose filtered value is ControlTemp         */
+    TC_SIGNAL_COUNT      = 27
+};
+
+/* TC_ERROR_STATUS bits. b0..b2 keep the v1 meaning for a single-sensor
+ * system (hi limit, lo limit, bad reading). Bits 0..8 latch until Reset or
+ * Init; bit 9 follows the current configuration. */
+#define TC_ERRBIT_T1_HI        (1u << 0)  /* Temp1 above HiLimit for ErrorTimeout: sensor 1 failed */
+#define TC_ERRBIT_T1_LO        (1u << 1)  /* Temp1 below LoLimit for ErrorTimeout: sensor 1 failed */
+#define TC_ERRBIT_T1_BAD       (1u << 2)  /* Temp1 NaN/Inf for ErrorTimeout: sensor 1 failed        */
+#define TC_ERRBIT_T2_HI        (1u << 3)
+#define TC_ERRBIT_T2_LO        (1u << 4)
+#define TC_ERRBIT_T2_BAD       (1u << 5)
+#define TC_ERRBIT_DISAGREE     (1u << 6)  /* |Temp1f - Temp2f| > Temp2Tolerance for ErrorTimeout   */
+#define TC_ERRBIT_HEATER_FB    (1u << 7)  /* heater feedback != heating command for ErrorTimeout   */
+#define TC_ERRBIT_COOLER_FB    (1u << 8)  /* cooler feedback != cooling command for ErrorTimeout   */
+#define TC_ERRBIT_CONFIG       (1u << 9)  /* configuration inconsistent (also TC_WARN_CONFIG)      */
+#define TC_ERRBIT_SENSOR1      (TC_ERRBIT_T1_HI | TC_ERRBIT_T1_LO | TC_ERRBIT_T1_BAD)
+#define TC_ERRBIT_SENSOR2      (TC_ERRBIT_T2_HI | TC_ERRBIT_T2_LO | TC_ERRBIT_T2_BAD)
+
+/* TC_TEMP_STATUS values. When several apply the first in this list wins:
+ * STOPPED, ERROR_PENDING, WARMUP, DEGRADED, then the control state. */
+enum TcTempStatus {
+    TC_STATUS_IN_BAND       = 0, /* idle, ControlTemp inside [LoBand, HiBand]        */
+    TC_STATUS_HEAT_PENDING  = 1, /* below LoBand, deadband countdown running          */
+    TC_STATUS_HEATING       = 2, /* heating relay on, until ControlTemp >= Setpoint   */
+    TC_STATUS_COOL_PENDING  = 3, /* above HiBand, deadband countdown running          */
+    TC_STATUS_COOLING       = 4, /* cooling relay on, until ControlTemp <= Setpoint   */
+    TC_STATUS_ERROR_PENDING = 5, /* an error countdown is running (ErrorRemainMs > 0) */
+    TC_STATUS_STOPPED       = 6, /* fault: relays off, latched until Reset            */
+    TC_STATUS_DEGRADED      = 7, /* Temp2Enable and one sensor failed; running on the other */
+    TC_STATUS_WARMUP        = 8  /* fewer than FilterPoints samples in the active filter */
 };
 
 enum TcAction {
-    TC_ACTION_INIT  = 0,  /* clear fault/timers, take relay state from in[8..9] */
-    TC_ACTION_STEP  = 1,  /* run one control tick                               */
-    TC_ACTION_RESET = 2   /* clear fault/timers, relays off, keep config        */
+    TC_ACTION_INIT  = 0,  /* clear everything, relay state from in[15..16], sensor 1 active */
+    TC_ACTION_STEP  = 1,  /* run one control tick                                          */
+    TC_ACTION_RESET = 2   /* clear faults, latched bits, timers; relays off; keep filters  */
 };
 
-#define TC_MAX_ZONES 16
+#define TC_MAX_ZONES     16
+#define TC_MAX_FILTER    64
+#define TC_DEFAULT_FILTER 4
 
 /*
  * One controller tick.
  *   zone    0..TC_MAX_ZONES-1, independent controller instances.
  *   action  TcAction.
  *   nowMs   free-running millisecond tick (LabVIEW Tick Count (ms)). The
- *           library differences successive values, wrap-around is handled.
- *   in      TC_SIGNAL_COUNT SGL values, order per TcSignal. All configuration
- *           fields are read on every call, so a setpoint or limit change takes
- *           effect on the next step with no re-init.
- *   out     TC_SIGNAL_COUNT (or TC_SIGNAL_COUNT_EXT) SGL values. May be the
- *           same array as `in` (in-place update).
+ *           library differences successive values; wrap-around is handled.
+ *   in      >= TC_INPUT_COUNT SGL values, order per TcSignal.
+ *   out     >= TC_SIGNAL_COUNT SGL values. May be the same array as `in`.
  *
- * Behaviour (STEP):
- *   - Fault latched: once ActualTemp has been above HiLimit (or below LoLimit,
- *     or NaN/Inf) continuously for ErrorTimeout ms, ErrorStatus = 1/2/3, both
- *     relays off, and nothing changes until RESET (or INIT).
- *   - A NaN/Inf reading also drops both relays immediately while the error
- *     countdown runs.
- *   - Countdowns restart from their full value whenever their condition clears.
- *   - Idle: if temp > HiDeadband for DeadbandTimeout ms -> cooling on;
- *           if temp < LoDeadband for DeadbandTimeout ms -> heating on.
- *   - Heating stays on until temp >= Setpoint, cooling until temp <= Setpoint.
- *   - Heating and cooling are mutually exclusive.
+ * Behaviour (STEP), evaluated in this order:
+ *
+ *   Filtering  Each sensor's valid (non-NaN/Inf) samples enter a moving
+ *              average of FilterPoints; the filtered value is NaN until the
+ *              first valid sample. Bad samples are not averaged.
+ *
+ *   Sensors    Per sensor (Temp2 only when Temp2Enable): condition = bad
+ *              reading (raw NaN/Inf or no filtered value yet), else filtered
+ *              > HiLimit, else filtered < LoLimit. A condition held for
+ *              ErrorTimeout ms fails the sensor (latched bit, see
+ *              TC_ERRBIT_*). Countdowns start at the first Step that observes
+ *              the condition and restart from full when it changes.
+ *              Disagreement |Temp1f - Temp2f| > Temp2Tolerance for
+ *              ErrorTimeout latches TC_ERRBIT_DISAGREE; the controller keeps
+ *              running on the active sensor.
+ *
+ *   Failover   Temp2Enable = 0: sensor 1 failed -> STOPPED (relays off,
+ *              latched). Temp2Enable = 1: the active sensor failed and the
+ *              other one has not -> ActiveSensor switches, DEGRADED; both
+ *              failed -> STOPPED. A failed sensor stays failed until Reset.
+ *
+ *   Bad active A raw NaN/Inf on the active sensor drops both relays at once
+ *              (and clears the deadband countdown) while its error countdown
+ *              runs, exactly as v1.
+ *
+ *   Control    On ControlTemp (filtered active sensor): heating stays on
+ *              until >= Setpoint, cooling until <= Setpoint. Idle: above
+ *              HiBand for DeadbandTimeout -> cooling; below LoBand for
+ *              DeadbandTimeout -> heating. Heating and cooling are mutually
+ *              exclusive.
+ *
+ *   Feedback   FeedbackEnable = 1: HeaterFeedback / CoolerFeedback (0/1) are
+ *              compared with the commands issued by the previous Step. A
+ *              mismatch held for ErrorTimeout latches TC_ERRBIT_HEATER_FB /
+ *              TC_ERRBIT_COOLER_FB; operation continues.
+ *
+ *   Config     DeadbandHi/Lo >= 0, LoLimit < LoBand, HiBand < HiLimit,
+ *              timeouts >= 0, Temp2Tolerance >= 0, FilterPoints in 1..64 (0
+ *              means TC_DEFAULT_FILTER; other values are clamped). Otherwise
+ *              TC_WARN_CONFIG is returned and TC_ERRBIT_CONFIG is set for
+ *              this call; the controller still runs.
  */
 TC_API int32_t TcStep(int32_t zone, int32_t action, uint32_t nowMs,
                       const float* in, int32_t inLen,
                       float* out, int32_t outLen);
-
-/* ------------------------------------------------------------------------ */
-/* NI-XNET raw frame / .ncl output                                           */
-/* ------------------------------------------------------------------------ */
-/*
- * Every frame produced by the encoders below is one NI-XNET raw frame record,
- * identical to an NI-XNET logfile (.ncl) event record, little-endian:
- *
- *   offset size  field
- *   0      8     Timestamp, U64, 100 ns units (NI epoch 1601-01-01 UTC; 0 = none)
- *   8      4     Identifier, U32; bit 29 (0x20000000) set = 29-bit extended ID
- *   12     1     Type   (0x00 = CAN data frame)
- *   13     1     Flags  (0)
- *   14     1     Info   (0)
- *   15     1     PayloadLength (0..8 for classic CAN)
- *   16     8     Payload, unused bytes 0
- *
- * TC_RAW_FRAME_SIZE bytes per classic CAN frame. The concatenated records can
- * be handed to XNET Write (Frame Output Stream, raw) or appended to a file
- * after the 12-byte header from TcNclHeader().
- */
-#define TC_RAW_FRAME_SIZE 24
-#define TC_NCL_HEADER_SIZE 12
-#define TC_XNET_EXTENDED_ID_FLAG 0x20000000u
-
-/* Writes the 12-byte NI-XNET logfile header (little-endian events). */
-TC_API int32_t TcNclHeader(uint8_t* out, int32_t outLen);
-
-/* ------------------------------------------------------------------------ */
-/* J1939 broadcast transport (BAM)                                           */
-/* ------------------------------------------------------------------------ */
-/*
- * Builds the J1939 frames that carry `payload` from source address `sa`
- * under parameter group `pgn`:
- *   len <= 8   : one frame with the PGN itself (PDU2 assumed, priority `priority`)
- *   len 9..1785: TP.CM BAM (PGN 0xEC00, DA 0xFF) followed by N TP.DT
- *                (PGN 0xEB00) packets of 7 data bytes, last packet padded 0xFF.
- *                TP frames use priority 7 as J1939-21 specifies.
- * Frame i gets timestamp `timestamp100ns + i * spacing100ns` (pass 0/0 to
- * leave timestamps zero). J1939-21 asks for 50..200 ms between BAM packets;
- * the caller paces the actual bus writes, XNET ignores timestamps for normal
- * stream output.
- *
- * out must hold TcJ1939BamFrameCount(len) * TC_RAW_FRAME_SIZE bytes; on
- * TC_ERR_BUFFER, *bytesWritten receives the required size.
- */
-TC_API int32_t TcJ1939BamFrameCount(int32_t payloadLen);
-TC_API int32_t TcJ1939Bam(uint32_t pgn, uint8_t sa, uint8_t priority,
-                          const uint8_t* payload, int32_t payloadLen,
-                          uint64_t timestamp100ns, uint64_t spacing100ns,
-                          uint8_t* out, int32_t outLen, int32_t* bytesWritten);
-
-/*
- * Temperature-controller convenience: sends the SGL array as raw IEEE-754
- * little-endian floats (4 bytes each, so 11 signals = 44 bytes = 1 TP.CM +
- * 7 TP.DT). Same framing rules and arguments as TcJ1939Bam.
- */
-TC_API int32_t TcEncodeFrames(const float* signals, int32_t n,
-                              uint32_t pgn, uint8_t sa, uint8_t priority,
-                              uint64_t timestamp100ns, uint64_t spacing100ns,
-                              uint8_t* out, int32_t outLen, int32_t* bytesWritten);
-
-/* Defaults used by the README / examples (Proprietary B, PGN 65280). */
-#define TC_DEFAULT_PGN       0xFF00u
-#define TC_DEFAULT_SA        0x80u
-#define TC_DEFAULT_PRIORITY  6u
-
-/* ------------------------------------------------------------------------ */
-/* Generic DBC-style packer                                                  */
-/* ------------------------------------------------------------------------ */
-/*
- * sigDefs: nSig rows of TC_SIGDEF_COLS doubles (DBC semantics):
- *   [0] frameIndex   row in frameDefs this signal lives in
- *   [1] startBit     DBC start bit (Intel: LSB position; Motorola: MSB position,
- *                    sawtooth numbering, exactly as in a .dbc file)
- *   [2] bitLength    1..64
- *   [3] byteOrder    0 = Intel / little-endian, 1 = Motorola / big-endian
- *   [4] valueType    0 = unsigned, 1 = signed (two's complement),
- *                    2 = IEEE float32 (bitLength 32), 3 = IEEE float64 (64)
- *   [5] factor       physical = raw * factor + offset
- *   [6] offset
- *   [7] min          physical clamp, ignored when max <= min
- *   [8] max
- * frameDefs: nFrames rows of TC_FRAMEDEF_COLS doubles:
- *   [0] arbitrationId  11- or 29-bit CAN identifier (no XNET flag bit)
- *   [1] extended       0 = standard, 1 = extended
- *   [2] dlc            0..8 payload bytes
- *   [3] cycleMs        reserved (echoed nowhere yet), pass 0
- * values: nSig physical values, same order as sigDefs.
- *
- * Every frame is emitted (unused bits 0), in frameDefs order, each one a
- * TC_RAW_FRAME_SIZE record with timestamp `timestamp100ns`.
- */
-#define TC_SIGDEF_COLS   9
-#define TC_FRAMEDEF_COLS 4
-TC_API int32_t TcCanPack(const double* sigDefs, int32_t nSig,
-                         const double* frameDefs, int32_t nFrames,
-                         const float* values, int32_t nValues,
-                         uint64_t timestamp100ns,
-                         uint8_t* out, int32_t outLen, int32_t* bytesWritten);
 
 #ifdef __cplusplus
 }

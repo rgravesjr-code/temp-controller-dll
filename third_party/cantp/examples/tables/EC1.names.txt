@@ -1,0 +1,28 @@
+EngSpeedAtIdlePoint1	rpm
+EngPercentTorqueAtIdlePoint1	%
+EngSpeedAtPoint2	rpm
+EngPercentTorqueAtPoint2	%
+EngSpeedAtPoint3	rpm
+EngPercentTorqueAtPoint3	%
+EngSpeedAtPoint4	rpm
+EngPercentTorqueAtPoint4	%
+EngSpeedAtPoint5	rpm
+EngPercentTorqueAtPoint5	%
+EngSpeedAtHighIdlePoint6	rpm
+EngGainOfEndspeedGovernor	%/rpm
+EngReferenceTorque	Nm
+EngMxMmntaryOverrideSpeedPoint7	rpm
+EngMxMomentaryOverrideTimeLimit	s
+EngRqedSpeedCtrlRangeLowerLimit	rpm
+EngRqedSpeedCtrlRangeUpperLimit	rpm
+EngRqdTorqueCtrlRangeLowerLimit	%
+EngRqdTorqueCtrlRangeUpperLimit	%
+EngExRngRqdSpdCtrlRngUpperLimit	rpm
+EngMomentOfInertia	kg-m²
+EngDefaultTorqueLimit	Nm
+SupportVariableRateTSC1Message	
+SupportTSC1CtrlPurposeGroup1	
+SupportTSC1CtrlPurposeGroup2	
+SupportTSC1CtrlPurposeGroup3	
+SupportTSC1CtrlPurposeGroup4	
+EngineDefaultIdleTorqueLimit	%

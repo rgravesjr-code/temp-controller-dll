@@ -1,0 +1,11 @@
+TempSim live SocketCAN loop, 2026-09-04
+tx: pi-engine (192.168.1.148, Raspberry Pi 5 aarch64) TempSim.Cli --scenario warmup --seconds 8 --can can1 --realtime
+rx: pi-trans  (192.168.1.178, Raspberry Pi 5 aarch64) TempSim.Cli --rx can0 --seconds 12   (CanTp_RxFeed on libcantp.so)
+
+TempSim.Cli 2.0.0  (tempctl 2.0.0, cantp 1.0.0, linux-arm64)
+listening on can0 for 12 s ...
+#1: Setpoint=50  DeadbandHi=5  DeadbandLo=5  HiLimit=90  LoLimit=10  ErrorTimeoutMs=2000  DeadbandTimeoutMs=500  FilterPoints=4  Temp2Enable=1  Temp2Tolerance=4  FeedbackEnable=1  Temp1=20.313  Temp2=19.813  HeaterFeedback=0  CoolerFeedback=0  HeatingCmd=0  CoolingCmd=0  ErrorStatus=0  TempStatus=8  ControlTemp=20.313  Temp1Filtered=20.313  Temp2Filtered=19.813  HiBand=55  LoBand=45  ErrorRemainMs=0  DbRemainMs=0  ActiveSensor=1
+#2: Setpoint=50  DeadbandHi=5  DeadbandLo=5  HiLimit=90  LoLimit=10  ErrorTimeoutMs=2000  DeadbandTimeoutMs=500  FilterPoints=4  Temp2Enable=1  Temp2Tolerance=4  FeedbackEnable=1  Temp1=20.313  Temp2=19.813  HeaterFeedback=0  CoolerFeedback=0  HeatingCmd=0  CoolingCmd=0  ErrorStatus=0  TempStatus=8  ControlTemp=20.313  Temp1Filtered=20.313  Temp2Filtered=19.813  HiBand=55  LoBand=45  ErrorRemainMs=0  DbRemainMs=500  ActiveSensor=1
+...
+#81: Setpoint=50  DeadbandHi=5  DeadbandLo=5  HiLimit=90  LoLimit=10  ErrorTimeoutMs=2000  DeadbandTimeoutMs=500  FilterPoints=4  Temp2Enable=1  Temp2Tolerance=4  FeedbackEnable=1  Temp1=49.844  Temp2=49.344  HeaterFeedback=0  CoolerFeedback=0  HeatingCmd=0  CoolingCmd=0  ErrorStatus=0  TempStatus=0  ControlTemp=49.938  Temp1Filtered=49.938  Temp2Filtered=49.438  HiBand=55  LoBand=45  ErrorRemainMs=0  DbRemainMs=0  ActiveSensor=1
+729 frames, 81 TempCtl messages

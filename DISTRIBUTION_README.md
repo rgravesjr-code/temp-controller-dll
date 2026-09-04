@@ -1,109 +1,121 @@
-# tempctl — Distribution Package v1.0.0
+# TempCtl — Distribution Package v2.0.0
 
-Temperature controller + J1939 BAM / NI-XNET raw-frame encoder for LabVIEW
-(Call Library Function Node), as a Windows DLL and an NI Linux RT shared
-library for the cRIO-9045.
+Temperature controller for LabVIEW (Call Library Function Node) as a Windows
+DLL and Linux shared libraries, with its J1939 CAN message defined in a DBC
+and transported by the separate **CanTp** library (vendored, unmodified), and
+a closed-loop simulator for Windows and Linux.
 
 ## Files in this package
 
 | File | Purpose |
 |---|---|
-| `tempctl.dll` | The library, **Windows x64** (64-bit LabVIEW, Python, .NET) |
-| `tempctl.lib` | x64 import library for C/C++ linking |
+| `tempctl.dll`, `tempctl.lib` | The controller, **Windows x64** (64-bit LabVIEW, Python, .NET) |
 | `x86\tempctl.dll`, `x86\tempctl.lib` | The same library built **x86** for 32-bit LabVIEW |
-| `linux-x64\libtempctl.so` | The library for **NI Linux RT x86_64** (cRIO-904x/905x/906x, incl. cRIO-9045) |
-| `linux-x64\test_tempctl` | Release-gate test compiled for the cRIO; run once on the target |
-| `tempctl.h` | C header, one header for every build |
-| `test_tempctl.exe`, `x86\test_tempctl.exe` | Release-gate test, Windows x64 / x86 (`154 passed, 0 failed`) |
-| `TESTLOG.txt` | Captured output of the Windows gates and the Python oracle at package time |
-| `DEPENDENCIES.txt` | Import report: DLL/exe PE imports (no VC runtime) and .so ELF exports + GLIBC needs |
+| `linux-x64\libtempctl.so` | **NI Linux RT x86_64** (cRIO-904x/905x/906x, incl. cRIO-9045) |
+| `linux-arm64\libtempctl.so` | **aarch64 Linux** (Raspberry Pi 4/5) |
+| `linux-*\test_tempctl`, `test_tempctl.exe`, `x86\test_tempctl.exe` | Release-gate test for each target (`181 passed, 0 failed`) |
+| `tempctl.h` | C header, one header for every build (the behavioural spec is in its comments) |
+| `third_party\cantp\` | **CanTp v1.0.0** release package, unmodified: `cantp.dll` (x64, `x86\`), `libcantp.so` (`linux-x64\`, `linux-arm64\`), `cantp.h`, its guides, `tools\dbc2tables.py`. See `VENDORED.txt` |
+| `dbc\tempctl.dbc` | The controller message: PGN 65280, 27 signals in `TcStep` output order, J1939 BAM |
+| `dbc\tables\TempCtl.*.csv`, `.json`, `cantp_tables.h` | The same message as CanTp tables: CSV for LabVIEW (`Read Delimited Spreadsheet` → `CanTp_Define`), JSON for the simulator, C header |
+| `simulator\win-x64\TempSim.exe` | Windows simulator (WPF): plant + sensors + relays around the real DLLs, live graph, frames panel |
+| `simulator\win-x64\TempSim.Cli.exe`, `simulator\linux-x64\TempSim.Cli`, `simulator\linux-arm64\TempSim.Cli` | Console simulator: scripted scenarios → CSV + `.ncl`; Linux builds can drive a SocketCAN interface |
+| `TESTLOG.txt` | Windows gates, DBC check, Python oracle, simulator gates, and the Raspberry Pi logs |
+| `DEPENDENCIES.txt` | Import report of the native libraries (no VC runtime; .so on libc only) |
 | `MANIFEST.txt` | File list with SHA-256 hashes |
-| `TEMPCTL_PACKAGE_GUIDE.md` | **API reference** with CLFN parameter tables, frame formats, controller semantics |
-| `LABVIEW_INTEGRATION.md` | Deploying to the cRIO, CLFN settings per function, RT loop sketch, XNET pacing, troubleshooting |
+| `TEMPCTL_PACKAGE_GUIDE.md` | **API reference**: `TcStep` parameters, the 27-signal array, status/error codes, semantics |
+| `LABVIEW_INTEGRATION.md` | CLFN settings, RT loop sketch with CanTp, cRIO/Pi deployment, troubleshooting |
+| `SIMULATOR.md` | Using the simulators, scenarios, config file, CSV columns, SocketCAN |
 | `TESTING.md` | What the gates cover and how to re-run them |
-| `CHANGELOG.md` | Release history |
-| `LICENSE.txt` | MIT license |
-| `examples\make_sample_ncl.py` | ctypes example: simulated plant → controller → BAM → `.ncl` log |
-| `examples\sample_tempctl.ncl`, `examples\sample_tempctl.csv` | Its output: open the `.ncl` in NI-XNET Bus Monitor |
-| `examples\oracle_test.py` | ctypes cross-check against cantools and pretty_j1939 (also an API usage example) |
-| `src\` | Complete source (C99) and the build script, so the library can be rebuilt or audited |
+| `CHANGELOG.md`, `LICENSE.txt` | Release history, MIT license |
+| `docs\DESIGN-DECISIONS-2026-09-04.md` | The decisions taken with the owner and Scott that shaped v2 and CanTp |
+| `docs\testlogs\` | Raw logs from the Raspberry Pi runs |
+| `examples\oracle_test.py` | ctypes example of the full chain: `TcStep` → `CanTp_PackSgl` → frames → `CanTp_Unpack`, checked against cantools |
+| `examples\out\sensor-failover.csv`, `.ncl` | Simulator output of the failover scenario (open the `.ncl` in NI-XNET Bus Monitor) |
+| `examples\tempsim-screenshot.png` | The Windows simulator after 70 s of that scenario |
+| `tools\make_tempctl_dbc.py` | Generator of `tempctl.dbc` (the only place the message layout is defined) |
+| `src\` | Complete C source, build scripts, and the simulator's C# source |
 
-No runtime dependencies: the DLLs link the CRT statically and import only
-`KERNEL32.dll`; the .so imports only `memcpy`/`memset` from libc (GLIBC 2.14
-symbols, present on every NI Linux RT release). `DEPENDENCIES.txt` is the
-verification.
+No runtime dependencies for the libraries: the DLLs link the CRT statically
+and import only `KERNEL32.dll`; the `.so` files import only `memcpy`/`memset`
+from libc (GLIBC 2.14 symbols). The simulators are self-contained .NET 10
+publishes (nothing to install).
 
 ## Quick start
-
-**cRIO-9045**
-
-```bat
-scp linux-x64\libtempctl.so admin@<crio-ip>:/usr/local/lib/
-scp linux-x64\test_tempctl  admin@<crio-ip>:/home/admin/
-ssh admin@<crio-ip> "chmod 755 /usr/local/lib/libtempctl.so /home/admin/test_tempctl && /home/admin/test_tempctl"
-```
-
-Then in the RT VI's Call Library Function Node: path
-`/usr/local/lib/libtempctl.so`, calling convention **C**, return type I32.
-
-**Windows** — put `tempctl.dll` (or `x86\tempctl.dll` for 32-bit LabVIEW)
-next to the VI and use the same CLFN settings with path `tempctl.dll`.
 
 **Verify on your machine**
 
 ```bat
-test_tempctl.exe          -> 154 passed, 0 failed
+test_tempctl.exe                      -> 181 passed, 0 failed
+simulator\win-x64\TempSim.exe         -> the graph runs immediately; try Scenario > sensor-failover > Load
+simulator\win-x64\TempSim.Cli.exe --scenario all --out out
 ```
 
-## The three functions you will use
+**cRIO-9045 (x86_64)**
 
-| Export | What it does |
-|---|---|
-| `TcStep(zone, action, nowMs, in[11], 11, out[13], 13)` | One controller tick. action 0 Init / 1 Step / 2 Reset; `nowMs` = Tick Count (ms). Reads the whole config every call; outputs relay commands, ErrorStatus, and the two countdowns |
-| `TcEncodeFrames(signals, n, pgn, sa, prio, ts, spacing, out, cap, &written)` | The SGL array as raw floats in a J1939 BAM: 1 TP.CM + 7 TP.DT for 11 signals, 8 × 24-byte NI-XNET raw frames = 192 bytes, ready for XNET Write (Frame Output Stream, raw) or a `.ncl` file |
-| `TcCanPack(sigDefs, nSig, frameDefs, nFrames, values, nValues, ts, out, cap, &written)` | Any signals into any classic CAN frames from a DBC-style table (start bit, length, byte order, type, factor, offset, min, max) |
+```bat
+scp linux-x64\libtempctl.so third_party\cantp\linux-x64\libcantp.so admin@<crio-ip>:/usr/local/lib/
+scp linux-x64\test_tempctl admin@<crio-ip>:/home/admin/
+ssh admin@<crio-ip> "chmod 755 /usr/local/lib/lib*.so /home/admin/test_tempctl && /home/admin/test_tempctl"
+```
 
-Plus `TcJ1939Bam` (arbitrary byte payload), `TcJ1939BamFrameCount`,
-`TcNclHeader` (12-byte logfile header) and `TcVersion`.
+**Raspberry Pi (aarch64)**: same with the `linux-arm64\` files; the
+`simulator\linux-arm64\TempSim.Cli` folder runs there directly
+(`./TempSim.Cli --scenario all --out out`, add `--can can0` to put the frames
+on a real bus).
 
-Signal order for `TcStep` and `TcEncodeFrames`: HiLimit, LoLimit,
-HiDeadband, LoDeadband, Setpoint, ActualTemp, ErrorTimeout(ms),
-DeadbandTimeout(ms), CoolingActive, HeatingActive, ErrorStatus
-(0 none, 1 HiLimit, 2 LoLimit, 3 bad reading).
+## The one controller function
 
-Defaults used for the controller message: PGN 65280 (0xFF00, Proprietary
-B), source address 0x80, priority 6 (TP frames use 7 per J1939-21).
+```c
+int32_t TcStep(int32_t zone, int32_t action, uint32_t nowMs,
+               const float* in, int32_t inLen, float* out, int32_t outLen);
+```
+
+`action` 0 Init / 1 Step / 2 Reset; `nowMs` = Tick Count (ms); `in` 17 SGL
+(configuration, measurements, initial relay state); `out` 27 SGL (echo of the
+inputs with the relay commands, then ErrorStatus, TempStatus, ControlTemp,
+filtered temperatures, bands, countdowns, active sensor). Full table in
+`TEMPCTL_PACKAGE_GUIDE.md`.
+
+Sending the state on CAN is two CanTp calls: `CanTp_Define(slot, msg, 8,
+sig, 27)` once with the tables from `dbc\tables\`, then `CanTp_PackSgl(slot,
+out, 27, ts, spacing, frames, cap, &written)` every tick → 9 NI-XNET raw
+frame records (one J1939 BAM) for XNET Write. `CanTp_Unpack` / `CanTp_RxFeed`
+do the reverse on the receiving side.
 
 ## Design decisions in this release
 
-- Transport is **J1939 BAM** (broadcast, no handshake), so all frames of a
-  message can be built up front. The caller paces them 50–200 ms apart.
-- The controller keeps its state in the library (16 zones by index) and
-  reads the full 11-element configuration on every call, so setpoint and
-  limit changes apply on the next tick without a re-Init.
-- Deadbands are absolute temperatures. A heat cycle ends at `≥ Setpoint`,
-  a cool cycle at `≤ Setpoint`. Config must satisfy
-  `LoLimit < LoDeadband ≤ Setpoint ≤ HiDeadband < HiLimit`; the library
-  returns warning 1 otherwise (a setpoint outside the deadband chatters).
-- Limit faults latch after ErrorTimeout with both relays off until Reset.
-  NaN/Inf readings drop the relays immediately and fault (status 3) after
-  the same timeout.
-- Countdowns start at the first Step that observes a condition; elapsed
-  time comes from the `nowMs` argument, not from an assumed loop period.
+- **Pure controller.** No CAN, no hardware, no file I/O in `tempctl`. The
+  caller maps thermocouples and relays; the minimum system is one sensor and
+  the heater/cooler outputs.
+- **Deadbands are offsets** added to / subtracted from the setpoint.
+- **Second sensor is optional.** With it enabled the controller keeps running
+  on the surviving sensor when one fails (rationality check on each,
+  disagreement check between them); both failed → stopped. Failed sensors
+  stay failed until Reset (no flapping).
+- **Feedback faults set a bit and keep going** (Scott's D4); failed sensors
+  and feedback bits are latched until Reset (owner's defaults Q2/Q3).
+- **ErrorStatus is a bit mask**; the low three bits keep the v1 meaning for
+  a single-sensor system.
+- **Never a DBC inside a DLL.** The message is defined once
+  (`tempctl.dbc`), converted to flat tables, loaded into CanTp with one call.
 
-## Known limits / not yet verified
+## Known limits
 
-- The `.so` was cross-compiled and inspected (ELF machine, exports, GLIBC
-  symbol versions) but **not executed on a cRIO before packaging**. Run
-  `linux-x64\test_tempctl` on the target as the first step.
-- Classic CAN only (DLC ≤ 8). CAN FD frames are not produced.
-- `TcCanPack` does not detect overlapping signal definitions.
-- The library does not transmit; it produces bytes for XNET Write.
+- The x86_64 `.so` was cross-compiled and inspected (ELF machine, exports,
+  GLIBC needs) but **not executed on a cRIO** in this release; the identical
+  source was executed on the Raspberry Pi (aarch64) with the same 181 checks
+  and the same simulator outputs as Windows. Run `linux-x64\test_tempctl` on
+  the target as the first step.
+- The Windows simulator is x64 only (the x86 DLL is covered by its own test
+  executable).
+- CanTp release 1 transports: classic CAN, CAN FD, J1939 BAM, receive.
+  RTS/CTS and ISO-TP are CanTp release 2.
 
 ---
 
 ## License
 
-MIT (see `LICENSE.txt`). Copyright (c) 2026 Roger Graves. Original
-implementation from the public J1939-21, NI-XNET raw frame and NI-XNET
-logfile specifications; no NI or Vector code is used or linked.
+MIT (see `LICENSE.txt`). Copyright (c) 2026 Roger Graves. No NI or Vector
+code is used or linked; the CAN encoding follows the public J1939-21 and
+NI-XNET raw-frame specifications through CanTp.

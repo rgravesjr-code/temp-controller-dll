@@ -59,7 +59,7 @@ function Get-PeImports {
     }
 }
 
-$lines = @("tempctl v$Version dependency report (generated at package time)", '')
+$lines = @("TempCtl v$Version dependency report (generated at package time)", '', 'The simulator folders are self-contained .NET 10 publishes (bundled runtime); only the native libraries are audited here.', '')
 $bad = $false
 foreach ($rel in @('tempctl.dll', 'x86\tempctl.dll', 'test_tempctl.exe', 'x86\test_tempctl.exe')) {
     $p = Join-Path $PackageDir $rel
@@ -78,7 +78,7 @@ foreach ($rel in @('tempctl.dll', 'x86\tempctl.dll', 'test_tempctl.exe', 'x86\te
 }
 
 # ELF report for the Linux artefacts (tools\elfinfo.py, needs python on PATH)
-foreach ($rel in @('linux-x64\libtempctl.so', 'linux-x64\test_tempctl')) {
+foreach ($rel in @('linux-x64\libtempctl.so', 'linux-x64\test_tempctl', 'linux-arm64\libtempctl.so', 'linux-arm64\test_tempctl')) {
     $p = Join-Path $PackageDir $rel
     if (-not (Test-Path -LiteralPath $p)) { continue }
     $lines += "$rel  [ELF]"

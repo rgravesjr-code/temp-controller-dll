@@ -18,7 +18,7 @@ BEGIN
     BLOCK "040904b0"
     BEGIN
       VALUE "CompanyName",      "Roger Graves"
-      VALUE "FileDescription",  "tempctl - temperature controller + J1939 BAM / NI-XNET raw frame encoder"
+      VALUE "FileDescription",  "TempCtl - temperature controller for LabVIEW (signals in, signals out)"
       VALUE "FileVersion",      TC_VERSION_STR
       VALUE "InternalName",     "tempctl"
       VALUE "LegalCopyright",   "Copyright (c) 2026 Roger Graves. MIT License."

@@ -1,0 +1,15 @@
+Cross-platform proof 2026-09-04: TempSim.Cli --scenario all on Windows x64 and on pi-engine (linux-arm64); CSV and .ncl compared with cmp
+IDENTICAL  both-sensors-fail.csv  211827 bytes
+IDENTICAL  both-sensors-fail.ncl  259212 bytes
+IDENTICAL  disagree.csv  215953 bytes
+IDENTICAL  disagree.ncl  259212 bytes
+IDENTICAL  feedback-fault.csv  219662 bytes
+IDENTICAL  feedback-fault.ncl  259212 bytes
+IDENTICAL  sensor-failover.csv  214539 bytes
+IDENTICAL  sensor-failover.ncl  259212 bytes
+IDENTICAL  setpoint-step.csv  215191 bytes
+IDENTICAL  setpoint-step.ncl  259212 bytes
+IDENTICAL  single-sensor.csv  210368 bytes
+IDENTICAL  single-sensor.ncl  259212 bytes
+IDENTICAL  warmup.csv  215120 bytes
+IDENTICAL  warmup.ncl  259212 bytes

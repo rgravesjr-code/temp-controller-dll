@@ -1,0 +1,26 @@
+<Project>
+  <!-- Copies the native tempctl + cantp libraries for the target RID next to the executable.
+       tempctl comes from ..\build\<rid>\ (run build.bat all first), cantp from the vendored
+       release in ..\third_party\cantp\. Without a RuntimeIdentifier the Windows x64 pair is used. -->
+  <PropertyGroup>
+    <TempSimRid>$(RuntimeIdentifier)</TempSimRid>
+    <TempSimRid Condition="'$(TempSimRid)' == ''">win-x64</TempSimRid>
+    <TempSimRepo>$(MSBuildThisFileDirectory)..\</TempSimRepo>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TempSimRid)' == 'win-x64'">
+    <None Include="$(TempSimRepo)build\win-x64\tempctl.dll" Link="tempctl.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TempSimRepo)third_party\cantp\cantp.dll" Link="cantp.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TempSimRid)' == 'win-x86'">
+    <None Include="$(TempSimRepo)build\win-x86\tempctl.dll" Link="tempctl.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TempSimRepo)third_party\cantp\x86\cantp.dll" Link="cantp.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TempSimRid)' == 'linux-x64'">
+    <None Include="$(TempSimRepo)build\linux-x64\libtempctl.so" Link="libtempctl.so" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TempSimRepo)third_party\cantp\linux-x64\libcantp.so" Link="libcantp.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TempSimRid)' == 'linux-arm64'">
+    <None Include="$(TempSimRepo)build\linux-arm64\libtempctl.so" Link="libtempctl.so" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(TempSimRepo)third_party\cantp\linux-arm64\libcantp.so" Link="libcantp.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
