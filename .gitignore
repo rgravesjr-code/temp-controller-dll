@@ -1,0 +1,17 @@
+# Build outputs
+build/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.res
+
+# Distribution packages (attach to GitHub releases instead)
+dist/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local Claude Code settings
+.claude/settings.local.json

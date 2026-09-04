@@ -1,0 +1,9 @@
+LIBRARY tempctl
+EXPORTS
+    TcVersion
+    TcStep
+    TcNclHeader
+    TcJ1939BamFrameCount
+    TcJ1939Bam
+    TcEncodeFrames
+    TcCanPack
