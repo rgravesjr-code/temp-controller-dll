@@ -1,7 +1,7 @@
 # tempctl — temperature controller + J1939 BAM encoder (DLL / .so)
 
 A small C99 library for LabVIEW's Call Library Function Node. One source tree
-builds `tempctl.dll` (Windows x64) and `libtempctl.so` (NI Linux RT x64,
+builds `tempctl.dll` (Windows x64 and x86) and `libtempctl.so` (NI Linux RT x64,
 cRIO-904x/905x). No runtime dependencies: the .so imports only `memcpy` and
 `memset` from libc (GLIBC 2.14), the .dll links the CRT statically.
 
@@ -46,9 +46,20 @@ build.bat test       :: dll + run tests
 build.bat linux      :: so only
 ```
 
-Outputs: `build\win-x64\tempctl.dll`, `build\win-x64\test_tempctl.exe`,
-`build\linux-x64\libtempctl.so`, `build\linux-x64\test_tempctl` (static Linux
+Outputs: `build\win-x64\tempctl.dll` (+ `build\win-x86\`), `test_tempctl.exe`
+for both, `build\linux-x64\libtempctl.so`, `build\linux-x64\test_tempctl` (Linux
 test binary, run it on the cRIO once: `./test_tempctl` prints `154 passed, 0 failed`).
+
+Distribution package (encrypted + plain zip, TESTLOG/DEPENDENCIES/MANIFEST,
+guides), same flow as the TdmsNative / Mf4FileCopy packages:
+
+```bat
+package_dist.bat 1.0.0 [zip-password]     :: -> dist\TempCtl_v1.0.0*
+```
+
+Guides: `DISTRIBUTION_README.md` (package contents), `TEMPCTL_PACKAGE_GUIDE.md`
+(API reference), `LABVIEW_INTEGRATION.md` (CLFN settings, cRIO deployment),
+`TESTING.md`, `CHANGELOG.md`.
 
 Oracle test (optional, needs `pip install cantools pretty_j1939`):
 
