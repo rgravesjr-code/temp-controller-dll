@@ -1,4 +1,4 @@
-/* cantp.c - slots, define, pack, unpack, live receive. See cantp.h. */
+/* cantp.c - slots, define, pack, unpack, live receive, session entry points. See cantp.h. */
 #include "cantp_internal.h"
 
 static CanTpMsg g_slots[CANTP_MAX_SLOTS];
@@ -7,6 +7,8 @@ CANTP_API uint32_t CanTp_Version(void)
 {
     return ((uint32_t)CANTP_VERSION_MAJOR << 16) | ((uint32_t)CANTP_VERSION_MINOR << 8) | CANTP_VERSION_PATCH;
 }
+
+CanTpMsg* cantp_slot(int32_t slot) { return &g_slots[slot]; }
 
 static CanTpMsg* slot_get(int32_t slot, int mustExist)
 {
@@ -19,24 +21,37 @@ static CanTpMsg* slot_get(int32_t slot, int mustExist)
     CanTpMsg* m = slot_get(slot, 1);                                         \
     if (!m) return (slot < 0 || slot >= CANTP_MAX_SLOTS) ? CANTP_ERR_SLOT : CANTP_ERR_NOT_DEFINED
 
+static double quiet_nan(void) { uint64_t b = 0x7FF8000000000000ULL; double d; memcpy(&d, &b, 8); return d; }
+
 /* ------------------------------------------------------------------------ */
 /* J1939 helpers                                                             */
 /* ------------------------------------------------------------------------ */
-static int is_pdu1(uint32_t pgn) { return ((pgn >> 8) & 0xFFu) < 0xF0u; }
+int is_pdu1(uint32_t pgn) { return ((pgn >> 8) & 0xFFu) < 0xF0u; }
 
-static uint32_t pgn_of_id(uint32_t id)
+uint32_t pgn_of_id(uint32_t id)
 {
     uint32_t pgn = (id >> 8) & 0x3FFFFu;
     if (is_pdu1(pgn)) pgn &= 0x3FF00u;            /* PS is a destination, not part of the PGN */
     return pgn;
 }
-static uint32_t j1939_id(uint32_t pgn, uint8_t sa, uint8_t da, uint8_t priority)
+uint32_t j1939_id(uint32_t pgn, uint8_t sa, uint8_t da, uint8_t priority)
 {
     pgn &= 0x3FFFFu;
     if (is_pdu1(pgn)) pgn = (pgn & 0x3FF00u) | da;
     return ((uint32_t)(priority & 7u) << 26) | (pgn << 8) | sa;
 }
 static int bam_frames_for(int len) { return len <= 8 ? 1 : 1 + (len + 6) / 7; }
+
+/* DT (J1939) or CF (ISO-TP) packets carrying the message, 0 for single-frame messages. */
+int packets_for(const CanTpMsg* m)
+{
+    switch (m->transport) {
+    case CANTP_TP_J1939_BAM:
+    case CANTP_TP_J1939_RTS: return m->len <= 8 ? 0 : (m->len + 6) / 7;
+    case CANTP_TP_ISOTP:     return m->len <= 7 ? 0 : (m->len - 6 + 6) / 7;
+    default:                 return 0;
+    }
+}
 
 /* ------------------------------------------------------------------------ */
 /* Define / queries                                                          */
@@ -73,10 +88,16 @@ CANTP_API int32_t CanTp_Define(int32_t slot, const double* msgDef, int32_t msgDe
     case CANTP_TP_J1939_BAM:
         if (!t.ext) return CANTP_ERR_MSGDEF;
         if (t.len < 0 || t.len > CANTP_MAX_PAYLOAD) return CANTP_ERR_MSGDEF;
-        if (t.da != J1939_GLOBAL_DA) return CANTP_ERR_TRANSPORT;    /* RTS/CTS: release 2 */
+        if (t.da != J1939_GLOBAL_DA) return CANTP_ERR_MSGDEF;      /* destination-specific: use RTS/CTS */
         break;
     case CANTP_TP_J1939_RTS:
-    case CANTP_TP_ISOTP:     return CANTP_ERR_TRANSPORT;
+        if (!t.ext) return CANTP_ERR_MSGDEF;
+        if (t.len < 0 || t.len > CANTP_MAX_PAYLOAD) return CANTP_ERR_MSGDEF;
+        if (t.da == J1939_GLOBAL_DA) return CANTP_ERR_MSGDEF;      /* RTS/CTS needs a real destination */
+        break;
+    case CANTP_TP_ISOTP:
+        if (t.len < 0 || t.len > CANTP_MAX_PAYLOAD) return CANTP_ERR_MSGDEF;
+        break;
     default:                 return CANTP_ERR_MSGDEF;
     }
 
@@ -100,6 +121,8 @@ CANTP_API int32_t CanTp_Define(int32_t slot, const double* msgDef, int32_t msgDe
         s->offset = r[CANTP_SIG_OFFSET];
         s->min = r[CANTP_SIG_MIN];
         s->max = r[CANTP_SIG_MAX];
+        s->muxRow = -1;
+        s->muxValue = 0;
         if (s->len < 1 || s->len > 64 || s->start < 0) return CANTP_ERR_SIGDEF;
         if (s->factor == 0.0) return CANTP_ERR_SIGDEF;
         if (s->type < 0 || s->type > 3) return CANTP_ERR_SIGDEF;
@@ -109,7 +132,31 @@ CANTP_API int32_t CanTp_Define(int32_t slot, const double* msgDef, int32_t msgDe
     }
     t.nSig = nSig;
     t.used = 1;
+    session_defaults(&t);
     *m = t;
+    return CANTP_OK;
+}
+
+CANTP_API int32_t CanTp_DefineMux(int32_t slot, const double* muxDefs, int32_t nSig)
+{
+    SLOT_OR_RETURN(m, slot);
+    if (!muxDefs || nSig != m->nSig) return CANTP_ERR_ARG;
+    int rows[CANTP_MAX_SIGNALS];
+    uint64_t vals[CANTP_MAX_SIGNALS];
+    for (int i = 0; i < nSig; i++) {
+        double r = muxDefs[i * CANTP_MUXDEF_COLS], v = muxDefs[i * CANTP_MUXDEF_COLS + 1];
+        if (r < -1 || r >= nSig || r != (double)(int)r) return CANTP_ERR_MUXDEF;
+        rows[i] = (int)r;
+        if (rows[i] == i) return CANTP_ERR_MUXDEF;
+        if (rows[i] >= 0 && (v < 0 || v > 1.8446744073709552e19 || v != (double)(uint64_t)v)) return CANTP_ERR_MUXDEF;
+        vals[i] = rows[i] >= 0 ? (uint64_t)v : 0;
+        if (rows[i] >= 0 && m->sig[rows[i]].type > 1) return CANTP_ERR_MUXDEF;   /* multiplexor must be an integer */
+    }
+    for (int i = 0; i < nSig; i++) {                     /* reject cycles */
+        int r = rows[i], hops = 0;
+        while (r >= 0) { if (++hops > nSig) return CANTP_ERR_MUXDEF; r = rows[r]; }
+    }
+    for (int i = 0; i < nSig; i++) { m->sig[i].muxRow = rows[i]; m->sig[i].muxValue = vals[i]; }
     return CANTP_OK;
 }
 
@@ -126,7 +173,7 @@ CANTP_API int32_t CanTp_PayloadLength(int32_t slot) { SLOT_OR_RETURN(m, slot); r
 
 static int frame_count(const CanTpMsg* m)
 {
-    return m->transport == CANTP_TP_J1939_BAM ? bam_frames_for(m->len) : 1;
+    return packets_for(m) > 0 ? 1 + packets_for(m) : 1;
 }
 static int output_size(const CanTpMsg* m)
 {
@@ -134,30 +181,49 @@ static int output_size(const CanTpMsg* m)
     case CANTP_TP_CLASSIC:   return xnet_record_size(m->len);
     case CANTP_TP_CANFD:
     case CANTP_TP_CANFD_BRS: return xnet_record_size(canfd_pad_len(m->len));
-    default:                 return bam_frames_for(m->len) * CANTP_RECORD_MIN;
+    default:                 return frame_count(m) * CANTP_RECORD_MIN;
     }
 }
 CANTP_API int32_t CanTp_FrameCount(int32_t slot) { SLOT_OR_RETURN(m, slot); return frame_count(m); }
 CANTP_API int32_t CanTp_OutputSize(int32_t slot) { SLOT_OR_RETURN(m, slot); return output_size(m); }
 
 /* ------------------------------------------------------------------------ */
+/* Multiplexing                                                              */
+/* ------------------------------------------------------------------------ */
+/* Is signal i present given every signal's raw value? (multiplexors may themselves be multiplexed) */
+static int mux_selected(const CanTpMsg* m, int i, const uint64_t* raws)
+{
+    int hops = 0;
+    while (m->sig[i].muxRow >= 0) {
+        int r = m->sig[i].muxRow;
+        if (raws[r] != m->sig[i].muxValue) return 0;
+        i = r;
+        if (++hops > m->nSig) return 0;
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Pack                                                                      */
 /* ------------------------------------------------------------------------ */
-static int32_t pack_values(const CanTpMsg* m, const double* values, int32_t nValues, uint8_t* payload)
+int32_t pack_values(const CanTpMsg* m, const double* values, int32_t nValues, uint8_t* payload)
 {
     if (nValues < m->nSig) return CANTP_ERR_ARG;
+    uint64_t raws[CANTP_MAX_SIGNALS];
+    for (int i = 0; i < m->nSig; i++) {
+        int rc = bits_encode(&m->sig[i], values[i], &raws[i]);
+        if (rc != CANTP_OK) return rc;
+    }
     memset(payload, m->pad, (size_t)m->len);   /* unused bits = pad; bits_place overwrites signal bits */
     for (int i = 0; i < m->nSig; i++) {
-        uint64_t raw;
-        int rc = bits_encode(&m->sig[i], values[i], &raw);
-        if (rc != CANTP_OK) return rc;
-        bits_place(payload, m->sig[i].start, m->sig[i].len, m->sig[i].motorola, raw);
+        if (!mux_selected(m, i, raws)) continue;
+        bits_place(payload, m->sig[i].start, m->sig[i].len, m->sig[i].motorola, raws[i]);
     }
     return CANTP_OK;
 }
 
-static int32_t emit_frames(const CanTpMsg* m, const uint8_t* payload, uint64_t ts, uint64_t spacing,
-                           uint8_t* out, int32_t outLen, int32_t* bytesWritten)
+int32_t emit_frames(const CanTpMsg* m, const uint8_t* payload, uint64_t ts, uint64_t spacing,
+                    uint8_t* out, int32_t outLen, int32_t* bytesWritten)
 {
     int need = output_size(m);
     if (!out || outLen < need) { *bytesWritten = need; return CANTP_ERR_BUFFER; }
@@ -177,17 +243,27 @@ static int32_t emit_frames(const CanTpMsg* m, const uint8_t* payload, uint64_t t
         *bytesWritten = need;
         return CANTP_OK;
     }
+    if (m->transport == CANTP_TP_ISOTP) {                /* single frame only; longer ones go through the session */
+        if (m->len > 7) return CANTP_ERR_TRANSPORT;
+        uint8_t buf[8]; memset(buf, m->pad, 8);
+        buf[0] = (uint8_t)(ISOTP_PCI_SF << 4 | m->len);
+        memcpy(buf + 1, payload, (size_t)m->len);
+        xnet_write_record(out, outLen, ts, m->id, m->ext, XNET_TYPE_CAN_DATA, buf, 8);
+        *bytesWritten = CANTP_RECORD_MIN;
+        return CANTP_OK;
+    }
 
-    /* J1939 BAM */
+    /* J1939 */
     uint32_t pgn = pgn_of_id(m->id);
     uint8_t* p = out;
     if (m->len <= 8) {                                   /* single frame under the PGN, DA applied for PDU1 */
         uint8_t buf[8]; memset(buf, m->pad, 8); memcpy(buf, payload, (size_t)m->len);
         uint32_t id = j1939_id(pgn, m->sa, m->da, (uint8_t)((m->id >> 26) & 7u));
         xnet_write_record(p, outLen, ts, id, 1, XNET_TYPE_CAN_DATA, buf, m->len);
-        *bytesWritten = need;
+        *bytesWritten = CANTP_RECORD_MIN;
         return CANTP_OK;
     }
+    if (m->transport != CANTP_TP_J1939_BAM) return CANTP_ERR_TRANSPORT;   /* RTS/CTS goes through the session */
     int nPackets = bam_frames_for(m->len) - 1;
     uint8_t d[8];
     d[0] = J1939_BAM_CTRL;
@@ -219,6 +295,8 @@ CANTP_API int32_t CanTp_Pack(int32_t slot, const double* values, int32_t nValues
     if (bytesWritten) *bytesWritten = 0;
     if (!bytesWritten || (!values && nValues > 0) || nValues < 0) return CANTP_ERR_ARG;
     SLOT_OR_RETURN(m, slot);
+    if (packets_for(m) > 0 && (m->transport == CANTP_TP_J1939_RTS || m->transport == CANTP_TP_ISOTP))
+        return CANTP_ERR_TRANSPORT;                      /* handshake needed: CanTp_TxStart */
     uint8_t payload[CANTP_MAX_PAYLOAD];
     int32_t rc = pack_values(m, values, nValues, payload);
     if (rc != CANTP_OK) return rc;
@@ -239,84 +317,57 @@ CANTP_API int32_t CanTp_PackSgl(int32_t slot, const float* values, int32_t nValu
 /* ------------------------------------------------------------------------ */
 /* Unpack / receive                                                          */
 /* ------------------------------------------------------------------------ */
-static void decode_values(const CanTpMsg* m, const uint8_t* payload, double* values, int32_t nValues)
+void decode_values(const CanTpMsg* m, const uint8_t* payload, double* values, int32_t nValues)
 {
+    uint64_t raws[CANTP_MAX_SIGNALS];
+    for (int i = 0; i < m->nSig; i++)
+        raws[i] = bits_extract(payload, m->sig[i].start, m->sig[i].len, m->sig[i].motorola);
     for (int i = 0; i < m->nSig && i < nValues; i++)
-        values[i] = bits_decode(&m->sig[i], bits_extract(payload, m->sig[i].start, m->sig[i].len, m->sig[i].motorola));
+        values[i] = mux_selected(m, i, raws) ? bits_decode(&m->sig[i], raws[i]) : quiet_nan();
 }
 
 /* Does this record's id carry the slot's message (single-frame case)? */
-static int id_matches(const CanTpMsg* m, uint32_t rawId)
+int id_matches(const CanTpMsg* m, uint32_t rawId)
 {
     int ext = (rawId & CANTP_XNET_EXTENDED_ID_FLAG) != 0;
     uint32_t id = rawId & 0x1FFFFFFFu;
     if (ext != m->ext) return 0;
     if (!m->ext) return id == m->id;
-    if (m->transport == CANTP_TP_J1939_BAM || m->saAny) {
-        /* J1939: compare PGN (and priority-less), any SA when placeholder */
+    if (m->transport == CANTP_TP_J1939_BAM || m->transport == CANTP_TP_J1939_RTS || m->saAny) {
+        /* J1939: compare PGN (priority-less), any SA when placeholder; PDU1: the PS byte must be our DA */
         if (pgn_of_id(id) != pgn_of_id(m->id)) return 0;
+        if (m->transport == CANTP_TP_J1939_RTS && is_pdu1(pgn_of_id(id)) && ((id >> 8) & 0xFFu) != m->da) return 0;
         return m->saAny || (id & 0xFFu) == m->sa;
     }
     return id == m->id;
 }
 
-/* Feed one record into the slot's decoder. Returns CANTP_FOUND when complete. */
-static int32_t feed_record(CanTpMsg* m, const uint8_t* rec, int recLen, double* values, int32_t nValues)
+/* Feed one record into the slot's decoder (no responses). Returns CANTP_FOUND when complete. */
+static int32_t feed_record(CanTpMsg* m, const uint8_t* rec, int recLen, uint32_t nowMs,
+                           double* values, int32_t nValues, uint8_t* out, int32_t outLen, int32_t* written)
 {
     int size = CanTp_RecordSize(rec, recLen);
     if (size < 0) return CANTP_ERR_RECORD;
-    uint32_t rawId = xnet_get_u32(rec + 8);
-    int plen = rec[15];
-    const uint8_t* data = rec + 16;
     int type = rec[12];
     if (type != XNET_TYPE_CAN_DATA && type != XNET_TYPE_CANFD_DATA && type != XNET_TYPE_CANFDBRS) return CANTP_OK;
 
-    /* single-frame messages (classic, FD, short BAM) */
-    if (m->transport != CANTP_TP_J1939_BAM || m->len <= 8) {
+    int singleFrame = m->transport == CANTP_TP_CLASSIC || m->transport == CANTP_TP_CANFD || m->transport == CANTP_TP_CANFD_BRS
+                   || ((m->transport == CANTP_TP_J1939_BAM || m->transport == CANTP_TP_J1939_RTS) && m->len <= 8);
+    if (singleFrame) {
+        uint32_t rawId = xnet_get_u32(rec + 8);
+        int plen = rec[15];
         if (!id_matches(m, rawId)) return CANTP_OK;
         if (plen < m->len) return CANTP_OK;                  /* too short to hold the signals */
-        decode_values(m, data, values, nValues);
+        decode_values(m, rec + 16, values, nValues);
         return CANTP_FOUND;
     }
+    return session_rx_record(m, rec, size, nowMs, xnet_get_u64(rec), values, nValues, out, outLen, written);
+}
 
-    /* J1939 transport: TP.CM / TP.DT from the expected sender */
-    if (!(rawId & CANTP_XNET_EXTENDED_ID_FLAG)) return CANTP_OK;
-    uint32_t id = rawId & 0x1FFFFFFFu;
-    uint32_t pgn = pgn_of_id(id);
-    uint8_t sa = (uint8_t)(id & 0xFFu);
-    uint8_t da = (uint8_t)((id >> 8) & 0xFFu);
-    if (!m->saAny && sa != m->sa) return CANTP_OK;
-    if (plen < 8) return CANTP_OK;
-
-    if (pgn == J1939_TP_CM_PGN) {
-        if (data[0] != J1939_BAM_CTRL || da != J1939_GLOBAL_DA) return CANTP_OK;   /* RTS etc.: release 2 */
-        uint32_t msgPgn = (uint32_t)data[5] | ((uint32_t)data[6] << 8) | ((uint32_t)data[7] << 16);
-        if (msgPgn != pgn_of_id(m->id)) return CANTP_OK;
-        int total = data[1] | (data[2] << 8);
-        int packets = data[3];
-        if (total < 9 || total > CANTP_MAX_PAYLOAD || packets != (total + 6) / 7) { m->rx.total = 0; return CANTP_OK; }
-        m->rx.total = total; m->rx.packets = packets; m->rx.nextSeq = 1; m->rx.sa = sa;
-        return CANTP_OK;
-    }
-    if (pgn == J1939_TP_DT_PGN && m->rx.total > 0 && sa == m->rx.sa) {
-        int seq = data[0];
-        if (seq != m->rx.nextSeq) { m->rx.total = 0; return CANTP_OK; }   /* lost packet: abandon */
-        int off = (seq - 1) * 7, n = m->rx.total - off; if (n > 7) n = 7;
-        memcpy(m->rx.buf + off, data + 1, (size_t)n);
-        if (seq == m->rx.packets) {
-            m->rx.total = 0;
-            if (m->len > CANTP_MAX_PAYLOAD) return CANTP_OK;
-            /* decode from what was received; a shorter-than-defined message is still decoded
-               (missing bytes read as pad) */
-            uint8_t payload[CANTP_MAX_PAYLOAD];
-            memset(payload, m->pad, sizeof payload);
-            memcpy(payload, m->rx.buf, (size_t)(off + n));
-            decode_values(m, payload, values, nValues);
-            return CANTP_FOUND;
-        }
-        m->rx.nextSeq++;
-    }
-    return CANTP_OK;
+int32_t cantp_feed_record(CanTpMsg* m, const uint8_t* rec, int recLen, double* values, int32_t nValues)
+{
+    int32_t w = 0;
+    return feed_record(m, rec, recLen, m->rx.lastMs, values, nValues, NULL, 0, &w);
 }
 
 CANTP_API int32_t CanTp_RxFeed(int32_t slot, const uint8_t* frame, int32_t frameLen,
@@ -324,7 +375,8 @@ CANTP_API int32_t CanTp_RxFeed(int32_t slot, const uint8_t* frame, int32_t frame
 {
     if (!frame || (!values && nValues > 0) || nValues < 0) return CANTP_ERR_ARG;
     SLOT_OR_RETURN(m, slot);
-    return feed_record(m, frame, frameLen, values, nValues);
+    int32_t w = 0;
+    return feed_record(m, frame, frameLen, m->rx.lastMs, values, nValues, NULL, 0, &w);
 }
 
 CANTP_API int32_t CanTp_RxReset(int32_t slot)
@@ -334,6 +386,30 @@ CANTP_API int32_t CanTp_RxReset(int32_t slot)
     return CANTP_OK;
 }
 
+CANTP_API int32_t CanTp_RxStep(int32_t slot, const uint8_t* frame, int32_t frameLen, uint32_t nowMs,
+                               uint64_t timestamp100ns, double* values, int32_t nValues,
+                               uint8_t* out, int32_t outLen, int32_t* bytesWritten)
+{
+    if (bytesWritten) *bytesWritten = 0;
+    if (!bytesWritten || (!values && nValues > 0) || nValues < 0 || (!out && outLen > 0)) return CANTP_ERR_ARG;
+    SLOT_OR_RETURN(m, slot);
+    if (!frame) return session_rx_timer(m, nowMs, timestamp100ns, out, outLen, bytesWritten);
+    return feed_record(m, frame, frameLen, nowMs, values, nValues, out, outLen, bytesWritten);
+}
+
+CANTP_API int32_t CanTp_RxStepSgl(int32_t slot, const uint8_t* frame, int32_t frameLen, uint32_t nowMs,
+                                  uint64_t timestamp100ns, float* values, int32_t nValues,
+                                  uint8_t* out, int32_t outLen, int32_t* bytesWritten)
+{
+    if (nValues < 0 || nValues > CANTP_MAX_SIGNALS) return CANTP_ERR_ARG;
+    double tmp[CANTP_MAX_SIGNALS];
+    int32_t rc = CanTp_RxStep(slot, frame, frameLen, nowMs, timestamp100ns, tmp, nValues, out, outLen, bytesWritten);
+    if (rc == CANTP_FOUND && values) for (int32_t i = 0; i < nValues; i++) values[i] = (float)tmp[i];
+    return rc;
+}
+
+CANTP_API int32_t CanTp_RxState(int32_t slot) { SLOT_OR_RETURN(m, slot); return m->rx.kind != RX_NONE; }
+
 CANTP_API int32_t CanTp_Unpack(int32_t slot, const uint8_t* frames, int32_t framesLen,
                                double* values, int32_t nValues, int32_t* bytesConsumed)
 {
@@ -342,11 +418,11 @@ CANTP_API int32_t CanTp_Unpack(int32_t slot, const uint8_t* frames, int32_t fram
     SLOT_OR_RETURN(m, slot);
     CanTpRx saved = m->rx;                       /* stateless: do not disturb the live decoder */
     memset(&m->rx, 0, sizeof m->rx);
-    int32_t off = 0, rc = CANTP_OK;
+    int32_t off = 0, rc = CANTP_OK, w = 0;
     while (off + CANTP_RECORD_MIN <= framesLen) {
         int size = CanTp_RecordSize(frames + off, framesLen - off);
         if (size < 0) { rc = CANTP_ERR_RECORD; break; }
-        rc = feed_record(m, frames + off, size, values, nValues);
+        rc = feed_record(m, frames + off, size, m->rx.lastMs, values, nValues, NULL, 0, &w);
         off += size;
         if (rc != CANTP_OK) break;
     }
@@ -364,3 +440,64 @@ CANTP_API int32_t CanTp_UnpackSgl(int32_t slot, const uint8_t* frames, int32_t f
     if (rc == CANTP_FOUND && values) for (int32_t i = 0; i < nValues; i++) values[i] = (float)tmp[i];
     return rc;
 }
+
+/* ------------------------------------------------------------------------ */
+/* Session entry points                                                      */
+/* ------------------------------------------------------------------------ */
+CANTP_API int32_t CanTp_SessionConfig(int32_t slot, const double* cfg, int32_t cfgLen)
+{
+    SLOT_OR_RETURN(m, slot);
+    if (!cfg || cfgLen < CANTP_SESSION_COLS) return CANTP_ERR_ARG;
+    CanTpSession s = m->ses;
+    if (cfg[0] >= 0) {
+        if (cfg[0] > 0x1FFFFFFF) return CANTP_ERR_ARG;
+        s.peerId = (uint32_t)cfg[0];
+        s.peerExt = cfg[1] < 0 ? m->ext : (cfg[1] != 0.0);
+        if (!s.peerExt && s.peerId > 0x7FFu) return CANTP_ERR_ARG;
+    }
+    if (cfg[2] < 0 || cfg[2] > 255 || cfg[3] < 0 || cfg[3] > 127 || cfg[4] < 0 || cfg[5] < 0 || cfg[5] > 255) return CANTP_ERR_ARG;
+    s.blockSize = (int)cfg[2];
+    s.stMin = (int)cfg[3];
+    s.timeoutMs = (uint32_t)cfg[4];
+    s.maxPerCts = (int)cfg[5] == 0 ? 255 : (int)cfg[5];
+    m->ses = s;
+    return CANTP_OK;
+}
+
+CANTP_API int32_t CanTp_TxStart(int32_t slot, const double* values, int32_t nValues, uint32_t nowMs,
+                                uint64_t timestamp100ns, uint64_t spacing100ns,
+                                uint8_t* out, int32_t outLen, int32_t* bytesWritten)
+{
+    if (bytesWritten) *bytesWritten = 0;
+    if (!bytesWritten || (!values && nValues > 0) || nValues < 0 || (!out && outLen > 0)) return CANTP_ERR_ARG;
+    SLOT_OR_RETURN(m, slot);
+    if (m->tx.state == TX_WAIT) return CANTP_ERR_BUSY;
+    int32_t rc = pack_values(m, values, nValues, m->tx.payload);
+    if (rc != CANTP_OK) return rc;
+    return session_tx_start(m, nowMs, timestamp100ns, spacing100ns, out, outLen, bytesWritten);
+}
+
+CANTP_API int32_t CanTp_TxStartSgl(int32_t slot, const float* values, int32_t nValues, uint32_t nowMs,
+                                   uint64_t timestamp100ns, uint64_t spacing100ns,
+                                   uint8_t* out, int32_t outLen, int32_t* bytesWritten)
+{
+    if (bytesWritten) *bytesWritten = 0;
+    if (!bytesWritten || (!values && nValues > 0) || nValues < 0 || nValues > CANTP_MAX_SIGNALS) return CANTP_ERR_ARG;
+    double tmp[CANTP_MAX_SIGNALS];
+    for (int32_t i = 0; i < nValues; i++) tmp[i] = values[i];
+    return CanTp_TxStart(slot, tmp, nValues, nowMs, timestamp100ns, spacing100ns, out, outLen, bytesWritten);
+}
+
+CANTP_API int32_t CanTp_TxFeed(int32_t slot, const uint8_t* frame, int32_t frameLen, uint32_t nowMs,
+                               uint64_t timestamp100ns, uint64_t spacing100ns,
+                               uint8_t* out, int32_t outLen, int32_t* bytesWritten)
+{
+    if (bytesWritten) *bytesWritten = 0;
+    if (!bytesWritten || (!out && outLen > 0)) return CANTP_ERR_ARG;
+    SLOT_OR_RETURN(m, slot);
+    if (frame && CanTp_RecordSize(frame, frameLen) < 0) return CANTP_ERR_RECORD;
+    return session_tx_feed(m, frame, frameLen, nowMs, timestamp100ns, spacing100ns, out, outLen, bytesWritten);
+}
+
+CANTP_API int32_t CanTp_TxState(int32_t slot) { SLOT_OR_RETURN(m, slot); return m->tx.state; }
+CANTP_API int32_t CanTp_TxReset(int32_t slot) { SLOT_OR_RETURN(m, slot); memset(&m->tx, 0, sizeof m->tx); return CANTP_OK; }

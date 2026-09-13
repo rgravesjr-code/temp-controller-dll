@@ -1,4 +1,4 @@
-# TempCtl — Distribution Package v2.0.0
+# TempCtl — Distribution Package v2.0.1
 
 Temperature controller for LabVIEW (Call Library Function Node) as a Windows
 DLL and Linux shared libraries, with its J1939 CAN message defined in a DBC
@@ -15,7 +15,7 @@ a closed-loop simulator for Windows and Linux.
 | `linux-arm64\libtempctl.so` | **aarch64 Linux** (Raspberry Pi 4/5) |
 | `linux-*\test_tempctl`, `test_tempctl.exe`, `x86\test_tempctl.exe` | Release-gate test for each target (`181 passed, 0 failed`) |
 | `tempctl.h` | C header, one header for every build (the behavioural spec is in its comments) |
-| `third_party\cantp\` | **CanTp v1.0.0** release package, unmodified: `cantp.dll` (x64, `x86\`), `libcantp.so` (`linux-x64\`, `linux-arm64\`), `cantp.h`, its guides, `tools\dbc2tables.py`. See `VENDORED.txt` |
+| `third_party\cantp\` | **CanTp v1.2.0** release package, unmodified: `cantp.dll` (x64, `x86\`), `libcantp.so` (`linux-x64\`, `linux-arm64\`, `linux-armhf\`), `cantp.h`, its guides, `tools\dbc2tables.py`, `tools\ecdflat.py`. See `VENDORED.txt` |
 | `dbc\tempctl.dbc` | The controller message: PGN 65280, 27 signals in `TcStep` output order, J1939 BAM |
 | `dbc\tables\TempCtl.*.csv`, `.json`, `cantp_tables.h` | The same message as CanTp tables: CSV for LabVIEW (`Read Delimited Spreadsheet` → `CanTp_Define`), JSON for the simulator, C header |
 | `simulator\win-x64\TempSim.exe` | Windows simulator (WPF): plant + sensors + relays around the real DLLs, live graph, frames panel |
@@ -109,8 +109,9 @@ do the reverse on the receiving side.
   the target as the first step.
 - The Windows simulator is x64 only (the x86 DLL is covered by its own test
   executable).
-- CanTp release 1 transports: classic CAN, CAN FD, J1939 BAM, receive.
-  RTS/CTS and ISO-TP are CanTp release 2.
+- CanTp transports used here: J1939 BAM (the vendored CanTp v1.2.0 also
+  offers RTS/CTS, ISO-TP, CAN FD, the ECD-cluster definition input and
+  `CanTp_Transfer`; the controller message needs none of them).
 
 ---
 

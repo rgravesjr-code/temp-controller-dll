@@ -1,0 +1,34 @@
+TempCtl v2.0.1 simulator (linux-arm64, CanTp 1.2.0 vendored) - Raspberry Pi 5, 2026-09-13T03:08:39Z
+TempSim.Cli 2.0.0  (tempctl 2.0.0, cantp 1.2.0, linux-arm64)
+
+=== warmup: Cold start at ambient: filter warm-up, heat pending, heating to setpoint, then in-band cycling.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/warmup.csv, /tmp/tempsim-out/warmup.ncl
+
+=== setpoint-step: Setpoint 50 -> 30 at 60 s (cooler engages), -> 70 at 90 s.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/setpoint-step.csv, /tmp/tempsim-out/setpoint-step.ncl
+
+=== sensor-failover: Sensor 1 opens (NaN) at 40 s: relays drop, T1 fails after ErrorTimeout, control fails over to sensor 2 (degraded). Sensor 1 returns at 60 s but stays failed until the operator reset at 80 s.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/sensor-failover.csv, /tmp/tempsim-out/sensor-failover.ncl
+
+=== both-sensors-fail: Sensor 2 sticks at 200 at 30 s (T2 hi, degraded), then sensor 1 opens at 50 s: stopped. Reset at 70 s with both healthy.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/both-sensors-fail.csv, /tmp/tempsim-out/both-sensors-fail.ncl
+
+=== disagree: Sensor 2 drifts +8 deg at 40 s: disagreement bit after ErrorTimeout, control continues on sensor 1.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors Disagree
+    -> /tmp/tempsim-out/disagree.csv, /tmp/tempsim-out/disagree.ncl
+
+=== feedback-fault: Heater relay sticks open at 30 s (feedback never follows the command): heater feedback bit, operation continues. Cooler sticks closed at 80 s: cooler feedback bit, and the cooler drives the plant below LoLimit until both sensors fail lo and the controller stops.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status Stopped, errors T1Lo|T2Lo|HeaterFeedback|CoolerFeedback
+    -> /tmp/tempsim-out/feedback-fault.csv, /tmp/tempsim-out/feedback-fault.ncl
+
+=== single-sensor: Minimum system (one sensor, no feedback): sensor opens at 50 s -> stopped after ErrorTimeout; reset at 70 s.
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/single-sensor.csv, /tmp/tempsim-out/single-sensor.ncl
+rc=0
+fb62858714fae9adfe57f414ed25d70fc12e6380e9bb9be7b47437d84ed000df  /tmp/tempsim-out/both-sensors-fail.ncl
+6ff6323bd5f4837bf497bf25aa5aff4ae27d5030416df236ffa47abf928f5944  /tmp/tempsim-out/disagree.ncl
+ae0685a6a495906702dda0d525a744fc177adf5f879843037925718eb7b52524  /tmp/tempsim-out/feedback-fault.ncl

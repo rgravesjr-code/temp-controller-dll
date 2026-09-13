@@ -1,4 +1,4 @@
-﻿cantp v1.0.0 dependency report (generated at package time)
+﻿cantp v1.2.0 dependency report (generated at package time)
 
 cantp.dll  [x64]
   imports KERNEL32.dll
@@ -17,36 +17,51 @@ x86\test_cantp.exe  [x86]
   -> operating-system DLLs only; no VC++ runtime
 
 linux-x64\libcantp.so  [ELF]
-  type DYN machine x86_64
+  class ELF64 type DYN machine x86_64
   NEEDED libc.so.6
   SONAME libcantp.so
-  EXPORTS ['CanTp_Clear', 'CanTp_Define', 'CanTp_FrameCount', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_SignalCount', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
+  EXPORTS ['CanTp_Clear', 'CanTp_Defaults', 'CanTp_Define', 'CanTp_DefineFlat', 'CanTp_DefineMux', 'CanTp_FlatSize', 'CanTp_FrameCount', 'CanTp_FrameLengths', 'CanTp_GetDef', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_RxState', 'CanTp_RxStep', 'CanTp_RxStepSgl', 'CanTp_SessionConfig', 'CanTp_SignalCount', 'CanTp_Transfer', 'CanTp_TransferSgl', 'CanTp_TxFeed', 'CanTp_TxReset', 'CanTp_TxStart', 'CanTp_TxStartSgl', 'CanTp_TxState', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
   IMPORTS ['memcpy', 'memset']
   GLIBC_VERSIONS_NEEDED ['GLIBC_2.14', 'GLIBC_2.2.5']
   -> libc only
 
 linux-x64\test_cantp  [ELF]
-  type EXEC machine x86_64
+  class ELF64 type EXEC machine x86_64
   NEEDED libc.so.6
   EXPORTS []
-  IMPORTS ['__libc_start_main', 'memcpy', 'memset', 'printf']
+  IMPORTS ['__libc_start_main', 'bcmp', 'memcpy', 'memset', 'printf']
   GLIBC_VERSIONS_NEEDED ['GLIBC_2.14', 'GLIBC_2.2.5']
   -> libc only
 
 linux-arm64\libcantp.so  [ELF]
-  type DYN machine AArch64
+  class ELF64 type DYN machine AArch64
   NEEDED libc.so.6
   SONAME libcantp.so
-  EXPORTS ['CanTp_Clear', 'CanTp_Define', 'CanTp_FrameCount', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_SignalCount', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
+  EXPORTS ['CanTp_Clear', 'CanTp_Defaults', 'CanTp_Define', 'CanTp_DefineFlat', 'CanTp_DefineMux', 'CanTp_FlatSize', 'CanTp_FrameCount', 'CanTp_FrameLengths', 'CanTp_GetDef', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_RxState', 'CanTp_RxStep', 'CanTp_RxStepSgl', 'CanTp_SessionConfig', 'CanTp_SignalCount', 'CanTp_Transfer', 'CanTp_TransferSgl', 'CanTp_TxFeed', 'CanTp_TxReset', 'CanTp_TxStart', 'CanTp_TxStartSgl', 'CanTp_TxState', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
   IMPORTS ['memcpy', 'memset']
   GLIBC_VERSIONS_NEEDED ['GLIBC_2.17']
   -> libc only
 
 linux-arm64\test_cantp  [ELF]
-  type EXEC machine AArch64
+  class ELF64 type EXEC machine AArch64
   NEEDED libc.so.6
   EXPORTS []
   IMPORTS ['__libc_start_main', 'abort', 'memcpy', 'memset', 'printf']
   GLIBC_VERSIONS_NEEDED ['GLIBC_2.17']
+  -> libc only
+
+linux-armhf\libcantp.so  [ELF]
+  class ELF32 type DYN machine ARM
+  SONAME libcantp.so
+  EXPORTS ['CanTp_Clear', 'CanTp_Defaults', 'CanTp_Define', 'CanTp_DefineFlat', 'CanTp_DefineMux', 'CanTp_FlatSize', 'CanTp_FrameCount', 'CanTp_FrameLengths', 'CanTp_GetDef', 'CanTp_MakeRecord', 'CanTp_NclHeader', 'CanTp_OutputSize', 'CanTp_Pack', 'CanTp_PackSgl', 'CanTp_PayloadLength', 'CanTp_RecordSize', 'CanTp_RecordSizeFor', 'CanTp_RxFeed', 'CanTp_RxReset', 'CanTp_RxState', 'CanTp_RxStep', 'CanTp_RxStepSgl', 'CanTp_SessionConfig', 'CanTp_SignalCount', 'CanTp_Transfer', 'CanTp_TransferSgl', 'CanTp_TxFeed', 'CanTp_TxReset', 'CanTp_TxStart', 'CanTp_TxStartSgl', 'CanTp_TxState', 'CanTp_Unpack', 'CanTp_UnpackSgl', 'CanTp_Version']
+  IMPORTS []
+  -> libc only
+
+linux-armhf\test_cantp  [ELF]
+  class ELF32 type EXEC machine ARM
+  NEEDED libc.so.6
+  EXPORTS []
+  IMPORTS ['__libc_start_main', 'abort', 'printf']
+  GLIBC_VERSIONS_NEEDED ['GLIBC_2.4']
   -> libc only
 

@@ -1,7 +1,11 @@
-CanTp v1.0.0 - vendored unmodified from the release package
-  source: https://github.com/rgravesjr-code/can-tp-dll  (tag v1.0.0)
-  file:   CanTp_v1.0.0_unencrypted.zip
-  sha256: 2b6190b4100414b4b8b4d7fda31b6191c8532f709a6534b10d63a1115e83b1ea
-  date:   2026-09-04
+CanTp v1.2.0 - vendored unmodified from the release package
+  source: https://github.com/rgravesjr-code/can-tp-dll  (tag v1.2.0)
+  file:   CanTp_v1.2.0_unencrypted.zip
+  sha256: 53fcfbc52002cf3a6a03503770c841aca3455ddb05e3487c82c06af6e69c91ee
+  date:   2026-09-12
+  adds over v1.0.0: CanTp_DefineFlat (flattened J1939Msg(V4) ECD cluster as input),
+  CanTp_FrameLengths / CanTp_Transfer (frame-length array, one call for both
+  directions), RTS/CTS + ISO-TP sessions and multiplexing (v1.1.0), linux-armhf.
+  TempCtl and its simulator use CanTp_Define / PackSgl / Unpack / RxFeed only.
 Do not edit anything in this folder; update by replacing it with a newer
 CanTp release package and changing this file.

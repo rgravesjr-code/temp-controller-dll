@@ -1,0 +1,13 @@
+CanTp v1.2.0 - Raspberry Pi 5 run, 2026-09-13T03:05:58Z (release binaries)
+Linux pi-engine 6.18.34+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.18.34-1+rpt1 (2026-06-09) aarch64 GNU/Linux
+
+=== linux-arm64/test_cantp (aarch64, glibc target 2.24) ===
+440 passed, 0 failed
+rc=0
+
+=== 32-bit ARM: static musl build of the same sources run under the 64-bit kernel (the shipped glibc-linked linux-armhf/test_cantp needs the 32-bit libc of a chroot) ===
+440 passed, 0 failed
+rc=0
+
+=== linux-arm64/libcantp.so loads via ctypes ===
+0x10200

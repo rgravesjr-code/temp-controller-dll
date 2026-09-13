@@ -49,7 +49,7 @@ extern "C" {
 #endif
 
 #define CANTP_VERSION_MAJOR 1
-#define CANTP_VERSION_MINOR 0
+#define CANTP_VERSION_MINOR 2
 #define CANTP_VERSION_PATCH 0
 /* (major << 16) | (minor << 8) | patch */
 CANTP_API uint32_t CanTp_Version(void);
@@ -68,6 +68,12 @@ CANTP_API uint32_t CanTp_Version(void);
 #define CANTP_ERR_TRANSPORT  -7   /* transport not supported in this release        */
 #define CANTP_ERR_RECORD     -8   /* malformed raw frame record in the input         */
 #define CANTP_ERR_TOO_MANY   -9   /* more signals than CANTP_MAX_SIGNALS             */
+#define CANTP_DONE            2   /* TxStart/TxFeed: the transmit session completed   */
+#define CANTP_ERR_TIMEOUT   -10   /* session: peer did not answer in time (aborted)   */
+#define CANTP_ERR_ABORTED   -11   /* session: peer aborted / overflow / bad sequence  */
+#define CANTP_ERR_BUSY      -12   /* TxStart while a transmit session is running      */
+#define CANTP_ERR_MUXDEF    -13   /* bad multiplex definition row                     */
+#define CANTP_ERR_FLAT      -14   /* bytes are not a flattened J1939Msg(V4) cluster   */
 
 /* ------------------------------------------------------------------------ */
 /* Limits                                                                    */
@@ -97,13 +103,16 @@ enum CanTpMsgDef {
     CANTP_MSG_CYCLE_MS  = 7  /* informational (DBC GenMsgCycleTime), not used   */
 };
 enum CanTpTransport {
-    CANTP_TP_CLASSIC    = 0, /* one classic CAN frame, DLC = length            */
+    CANTP_TP_CLASSIC    = 0, /* no transport protocol: one classic CAN frame,
+                                DLC = length (11- or 29-bit id)                 */
     CANTP_TP_J1939_BAM  = 1, /* J1939-21 BAM: length <= 8 -> single frame under
                                 the PGN, else TP.CM(BAM) + TP.DT packets        */
     CANTP_TP_CANFD      = 2, /* one CAN FD frame (type 0x10)                    */
     CANTP_TP_CANFD_BRS  = 3, /* one CAN FD frame with bit-rate switch (0x18)    */
-    CANTP_TP_J1939_RTS  = 4, /* reserved: J1939 RTS/CTS (release 2)             */
-    CANTP_TP_ISOTP      = 5  /* reserved: ISO 15765-2 (release 2)               */
+    CANTP_TP_J1939_RTS  = 4, /* J1939-21 RTS/CTS (destination-specific, DA != 255):
+                                session API below; length <= 8 -> single frame  */
+    CANTP_TP_ISOTP      = 5  /* ISO 15765-2 on classic CAN, normal addressing:
+                                session API below; length <= 7 -> single frame  */
 };
 
 /* ------------------------------------------------------------------------ */
@@ -202,6 +211,166 @@ CANTP_API int32_t CanTp_MakeRecord(uint32_t id, int32_t extended, int32_t frameT
                                    uint8_t* out, int32_t outLen);
 /* 12-byte NI-XNET logfile (.ncl) header, little-endian events. */
 CANTP_API int32_t CanTp_NclHeader(uint8_t* out, int32_t outLen);
+
+/* ------------------------------------------------------------------------ */
+/* Multiplexed signals (release 2)                                           */
+/* ------------------------------------------------------------------------ */
+/*
+ * Optional second table for a slot, one row of CANTP_MUXDEF_COLS doubles per
+ * signal row of the definition (same order), loaded after CanTp_Define:
+ *   [0] multiplexor row index: the row of the signal whose value selects this
+ *       one (DBC `m<n>` refers to the `M` signal), or -1 when the signal is
+ *       always present (plain signals and the multiplexor itself)
+ *   [1] selector value: this signal is present when the multiplexor's raw
+ *       value equals it (DBC `m3` -> 3)
+ * Pack: unselected signals are left as pad. Unpack: they read as NaN.
+ * A multiplexor may itself be multiplexed (extended multiplexing, one level
+ * per row, cycles are rejected). CanTp_Define clears the table.
+ */
+#define CANTP_MUXDEF_COLS 2
+CANTP_API int32_t CanTp_DefineMux(int32_t slot, const double* muxDefs, int32_t nSig);
+
+/* ------------------------------------------------------------------------ */
+/* Session transports: J1939 RTS/CTS and ISO 15765-2 (release 2)             */
+/* ------------------------------------------------------------------------ */
+/*
+ * These transports need frames from the peer (CTS / flow control) and
+ * timers, so a message is a session driven by the caller's loop:
+ *
+ *   sender:    CanTp_TxStart(values)      -> RTS / FirstFrame in `out`
+ *              CanTp_TxFeed(frame, nowMs) -> for every received record (or
+ *                                            frame = NULL to run the timers):
+ *                                            DT / ConsecutiveFrames in `out`
+ *              until CANTP_DONE or a negative code
+ *   receiver:  CanTp_RxStep(frame, nowMs) -> for every received record (or
+ *                                            NULL): CTS / EndOfMsgAck / flow
+ *                                            control in `out`; CANTP_FOUND when
+ *                                            the message is complete
+ *
+ * The record(s) written to `out` (0..N, see *bytesWritten) must be sent
+ * whatever the return code; on a negative code they hold the abort frame and
+ * the session is over. `out` sized with CanTp_OutputSize(slot) is always
+ * enough for one call. nowMs is a free-running millisecond tick (LabVIEW
+ * Tick Count); frame timestamps come from timestamp100ns (+ spacing100ns per
+ * additional frame).
+ *
+ * Addresses: J1939 RTS/CTS uses the definition's SA (sender) and DA
+ * (receiver) - the receiving node loads the same table and answers from DA.
+ * With the SA placeholder 0xFE the receiver accepts any sender. ISO-TP
+ * sends data on the definition's id and expects the peer's flow control on
+ * the peer id (CanTp_SessionConfig; 29-bit ids default to the id with the
+ * two address bytes swapped, 11-bit ids to id + 8, the UDS convention).
+ *
+ * BAM, classic and CAN FD messages also work through these calls (TxStart
+ * emits the whole sequence and returns CANTP_DONE; RxStep behaves like
+ * RxFeed), so one loop can serve every transport.
+ */
+
+/* Session parameters (CANTP_SESSION_COLS doubles); defaults apply until set:
+ *   [0] peer id: identifier carrying the peer's flow control / CTS (ISO-TP;
+ *       ignored for J1939 where it is derived from SA/DA). -1 = default
+ *   [1] peer id extended (0/1); -1 = same as the definition
+ *   [2] receiver block size: CTS packets per round (J1939, 1..255; 0 = all,
+ *       capped by the RTS's own limit) / ISO-TP BS (0 = all)
+ *   [3] receiver STmin in ms announced in ISO-TP flow control (0..127)
+ *   [4] timeout ms waiting for the peer (default 1250 J1939 T3 / 1000 ISO-TP
+ *       N_Bs, N_Cr; the DT wait uses 750 for J1939)
+ *   [5] sender max packets per CTS offered in the RTS (J1939, 1..255; 0 = 255)
+ */
+#define CANTP_SESSION_COLS 6
+CANTP_API int32_t CanTp_SessionConfig(int32_t slot, const double* cfg, int32_t cfgLen);
+
+CANTP_API int32_t CanTp_TxStart(int32_t slot, const double* values, int32_t nValues, uint32_t nowMs,
+                                uint64_t timestamp100ns, uint64_t spacing100ns,
+                                uint8_t* out, int32_t outLen, int32_t* bytesWritten);
+CANTP_API int32_t CanTp_TxStartSgl(int32_t slot, const float* values, int32_t nValues, uint32_t nowMs,
+                                   uint64_t timestamp100ns, uint64_t spacing100ns,
+                                   uint8_t* out, int32_t outLen, int32_t* bytesWritten);
+CANTP_API int32_t CanTp_TxFeed(int32_t slot, const uint8_t* frame, int32_t frameLen, uint32_t nowMs,
+                               uint64_t timestamp100ns, uint64_t spacing100ns,
+                               uint8_t* out, int32_t outLen, int32_t* bytesWritten);
+/* 0 idle, 1 waiting for the peer, 2 done (until the next TxStart); negative = last error */
+CANTP_API int32_t CanTp_TxState(int32_t slot);
+CANTP_API int32_t CanTp_TxReset(int32_t slot);
+
+CANTP_API int32_t CanTp_RxStep(int32_t slot, const uint8_t* frame, int32_t frameLen, uint32_t nowMs,
+                               uint64_t timestamp100ns, double* values, int32_t nValues,
+                               uint8_t* out, int32_t outLen, int32_t* bytesWritten);
+CANTP_API int32_t CanTp_RxStepSgl(int32_t slot, const uint8_t* frame, int32_t frameLen, uint32_t nowMs,
+                                  uint64_t timestamp100ns, float* values, int32_t nValues,
+                                  uint8_t* out, int32_t outLen, int32_t* bytesWritten);
+/* 0 idle, 1 a transfer is in progress */
+CANTP_API int32_t CanTp_RxState(int32_t slot);
+
+/* ------------------------------------------------------------------------ */
+/* Release 3 (v1.2.0): flattened LabVIEW cluster input, frame-length arrays, */
+/* one-call read/write                                                       */
+/* ------------------------------------------------------------------------ */
+/*
+ * CanTp_DefineFlat: define a slot from the bytes LabVIEW's "Flatten To
+ * String" produces for one "J1939Msg(V4).ctl" cluster (big-endian, array
+ * and string sizes prepended - the defaults), which is also the per-message
+ * record inside an Eaton .ecd database (tools/ecdflat.py extracts them).
+ * Signal order = channel order in the cluster. Used from the cluster:
+ * message ID, extended flag, NumDataBytes, UpdateRate (cycle); per channel
+ * start bit, number of bits, data type (0 Signed, 1 Unsigned, 2 IEEE Float),
+ * byte order (0 Intel, 1 Motorola), scaling factor, offset, min, max,
+ * default. Names, descriptions, units and lookup tables are skipped.
+ *   transport  CanTpTransport, or -1 = derive: 11-bit id -> classic (CAN FD
+ *              above 8 bytes); 29-bit id -> J1939: transport 1 (single frame
+ *              under the PGN up to 8 bytes, BAM above), except a PDU1 PGN
+ *              addressed to one node (PS not 0xFF / 0xFE): classic frame with
+ *              the id verbatim up to 8 bytes, RTS/CTS above
+ *   sa         source address override 0..253, or -1 = the id's low byte
+ * Priority and destination come from the id as stored in the cluster; pad is
+ * 0xFF for 29-bit ids. Returns CANTP_OK, CANTP_ERR_FLAT when the bytes do not
+ * parse, or the CanTp_Define codes. CanTp_FlatSize returns the number of
+ * bytes one cluster occupies at the start of `flat` (to walk a flattened
+ * array of clusters) or an error.
+ */
+CANTP_API int32_t CanTp_DefineFlat(int32_t slot, const uint8_t* flat, int32_t flatLen,
+                                   int32_t transport, int32_t sa);
+CANTP_API int32_t CanTp_FlatSize(const uint8_t* flat, int32_t flatLen);
+
+/* Read back the definition of a slot as CanTp_Define rows (either pointer may
+ * be NULL). Returns the signal count; at most nSigMax rows are written. */
+CANTP_API int32_t CanTp_GetDef(int32_t slot, double* msgDef, int32_t msgDefLen,
+                               double* sigDefs, int32_t nSigMax);
+/* Channel default values from the cluster (0 for table definitions); returns the signal count. */
+CANTP_API int32_t CanTp_Defaults(int32_t slot, double* values, int32_t nValues);
+
+/* Payload length (DLC bytes, 0..64) of every record in `frames`, in order.
+ * Returns the record count even when lensLen is smaller (then only the first
+ * lensLen are written), or CANTP_ERR_RECORD on a malformed buffer. */
+CANTP_API int32_t CanTp_FrameLengths(const uint8_t* frames, int32_t framesLen,
+                                     uint8_t* lens, int32_t lensLen);
+
+/*
+ * One entry point for both directions, with the frame-length array:
+ *   mode CANTP_MODE_WRITE (0): values in -> frames out (the records of one
+ *        sequence, TP.CM first, like CanTp_Pack), frameLens out (payload
+ *        length per frame), *bytesUsed = bytes written, *nFrames = frames
+ *        written. frameLens may be NULL/0. CANTP_ERR_BUFFER when frames or
+ *        frameLens is too small (*bytesUsed / *nFrames = sizes needed).
+ *   mode CANTP_MODE_READ (1): frames in (records, TP.CM first) -> values out,
+ *        like CanTp_Unpack; when frameLensLen > 0 the records are walked with
+ *        the caller's lengths (which must agree with the record headers,
+ *        else CANTP_ERR_RECORD) and at most frameLensLen records are read.
+ *        Returns CANTP_FOUND / CANTP_OK / error; *bytesUsed = bytes
+ *        consumed, *nFrames = records consumed.
+ * Every array is passed as an Array Data Pointer in LabVIEW; which ones are
+ * read or written depends on mode.
+ */
+#define CANTP_MODE_WRITE 0
+#define CANTP_MODE_READ  1
+CANTP_API int32_t CanTp_Transfer(int32_t slot, int32_t mode, double* values, int32_t nValues,
+                                 uint8_t* frames, int32_t framesLen, uint8_t* frameLens, int32_t frameLensLen,
+                                 uint64_t timestamp100ns, uint64_t spacing100ns,
+                                 int32_t* bytesUsed, int32_t* nFrames);
+CANTP_API int32_t CanTp_TransferSgl(int32_t slot, int32_t mode, float* values, int32_t nValues,
+                                    uint8_t* frames, int32_t framesLen, uint8_t* frameLens, int32_t frameLensLen,
+                                    uint64_t timestamp100ns, uint64_t spacing100ns,
+                                    int32_t* bytesUsed, int32_t* nFrames);
 
 #ifdef __cplusplus
 }

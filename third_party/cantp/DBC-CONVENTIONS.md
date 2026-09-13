@@ -34,7 +34,8 @@ BA_ "GenMsgCycleTime" BO_ 2566841342 5000;
 | length 9..1785 and `VFrameFormat = J1939PG` (3), or a 29-bit id with no FD attribute | 1 J1939 BAM | length ≤ 8 → one frame under the PGN; else TP.CM(BAM) + ⌈length/7⌉ TP.DT, priority 7, DA 0xFF, pad 0xFF, sequence 1..N |
 | `VFrameFormat = StandardCAN_FD` (14) / `ExtendedCAN_FD` (15), or cantools `is_fd` | 2 CAN FD | one frame, length padded up to the next valid FD DLC (12, 16, 20, 24, 32, 48, 64) with `pad`; record type 0x10 |
 | same + `BA_ "CANFD_BRS" BO_ <id> 1` | 3 CAN FD BRS | as above, record type 0x18 |
-| J1939 with DA ≠ 0xFF (RTS/CTS), ISO 15765-2 | 4, 5 | reserved for release 2; `CanTp_Define` returns `CANTP_ERR_TRANSPORT` |
+| length 9..1785, `VFrameFormat = J1939PG` and `dbc2tables.py --da <addr>` with addr ≠ 255 | 4 J1939 RTS/CTS | TP.CM(RTS) to DA, then TP.DT windows on the receiver's CTS, EndOfMsgAck from the receiver; a session (see the package guide). length ≤ 8 → one PDU frame to DA |
+| custom attribute `TpProtocol = "ISOTP"` on the `BO_` (`BA_DEF_ BO_ "TpProtocol" STRING ;`), or `dbc2tables.py --isotp <Message>` | 5 ISO-TP | ISO 15765-2 on classic CAN, normal addressing: SingleFrame (≤ 7 bytes), else FirstFrame + ConsecutiveFrames paced by the receiver's FlowControl on the peer id; a session. Pad 0xCC |
 
 A J1939 PG is identified by the PGN, not by the full id: on receive CanTp
 compares `(id >> 8) & 0x3FFFF` (with the PS byte masked for PDU1) and the SA
@@ -56,8 +57,22 @@ rule above, so the priority bits in the incoming frame may differ.
 | `(<factor>,<offset>)` | 4, 5 | `physical = raw × factor + offset`; factor must be non-zero |
 | `[<min>\|<max>]` | 6, 7 | Physical clamp on pack; ignored when max ≤ min (the DBC default `[0|0]`) |
 
-Multiplexed signals (`m0`, `M`) are not supported in release 1; the
-converter skips them with a warning.
+### Multiplexed signals
+
+```
+ SG_ AxleLocation M : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ AxleWeight_1F m31 : 8|16@1+ (0.5,0) [0|32127.5] "kg" Vector__XXX
+```
+
+The multiplexor (`M`) is an ordinary row; every `m<n>` signal is a row whose
+mux entry is `[row of the multiplexor, n]`; plain signals get `[-1, 0]`.
+`dbc2tables.py` writes this second table (`<Message>.mux.csv`, `"muxdefs"`,
+`<Message>_muxdefs`) and it is loaded with `CanTp_DefineMux` after
+`CanTp_Define`. A signal defined for several values (`SG_MUL_VAL_` ranges) is
+emitted once per value with the name suffixed `@m<n>`. Extended
+multiplexing (a multiplexor that is itself multiplexed) works one level per
+row. On pack an unselected signal leaves its bits as pad; on unpack it reads
+as NaN. Verified against cantools on the Vector VW message (17 rows).
 
 ## 4. Values on the wire
 
@@ -105,4 +120,37 @@ python tests\oracle_test.py build\win-x64\cantp.dll --dbc my.dbc
 ```
 
 (section (c) picks EEC1/EC1/RC/ET1/TCFG when present; edit the list for
-your message names).
+your message names; section (h) does the same for every cluster of an
+`.ecd` file through `CanTp_DefineFlat`).
+
+## 8. The ECD / `J1939Msg(V4)` cluster (v1.2.0)
+
+`CanTp_DefineFlat` accepts the flattened LabVIEW cluster instead of the
+tables. The mapping is one-to-one with §1 and §3:
+
+| Cluster | Table | Note |
+|---|---|---|
+| message ID, extended? | msg 0, 1 | id > 0x7FF or bit 31 set ⇒ extended, whatever the flag says (three messages in `J1939_NGHD_V130.ecd` have the flag clear on a 29-bit id) |
+| NumDataBytes | msg 2 | |
+| UpdateRate | msg 7 | when > 0 |
+| start bit, number of bits | sig 0, 1 | |
+| byte order 0 Intel / 1 Motorola | sig 2 | |
+| data type 0 Signed / 1 Unsigned / 2 IEEE Float | sig 3 = 1 / 0 / 2 (32 bit) or 3 (64 bit) | note the swapped numbering |
+| scaling factor, offset, min, max | sig 4..7 | |
+| default | `CanTp_Defaults` | |
+
+Transport, SA and DA are not in the cluster; §2 applies with the id's own
+bytes (derivation rules in the package guide), and the `transport` / `sa`
+arguments override.
+
+**Motorola start bits.** The library uses the DBC rule in §3 (start = MSB
+position, sawtooth). `J1939_NGHD_V130.ecd` has four Motorola channels in
+754 messages; two of them (`ISO15765_*.FirstFrameDataLength`, ECD `8|12`)
+would be `3|12@0` in the DBC and two (`ETC2.TransCurrentRange` ECD `48|16`,
+`TransRqedRange` `32|16`) are `55|16@0` / `39|16@0` — the ECD numbers follow
+neither the DBC rule nor one single other rule. Until the convention used by
+the ECD editor is confirmed, Motorola channels from a cluster should be
+checked against the DBC (the oracle does this by name), and a start bit that
+does not fit is rejected with −5 rather than silently shifted. Intel
+channels (all 6429 others) map verbatim.
+

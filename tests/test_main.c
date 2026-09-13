@@ -200,7 +200,7 @@ static void test_zero_timeouts_and_wrap(void)
 static void test_errors_config_and_aliasing(void)
 {
     base_cfg();
-    CHECK(TcVersion() == 0x020000);
+    CHECK(TcVersion() == 0x020001);
     CHECK(TcInputCount() == 17 && TcSignalCount() == 27);
     CHECK(TcStep(10, TC_ACTION_STEP, 0, cfg, TC_INPUT_COUNT, out, TC_SIGNAL_COUNT) == TC_ERR_NOT_INIT);
     CHECK(TcStep(-1, TC_ACTION_INIT, 0, cfg, TC_INPUT_COUNT, out, TC_SIGNAL_COUNT) == TC_ERR_ZONE);

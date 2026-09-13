@@ -1,6 +1,6 @@
 # Testing Guide — TempCtl v2
 
-Release gate for v2.0.0: `build.bat all` must finish with `181 passed, 0
+Release gate for v2.0.1 (controller unchanged since v2.0.0): `build.bat all` must finish with `181 passed, 0
 failed` for **both** the x64 and the x86 test executables and build both
 Linux targets; `tests\oracle_test.py` must print `ALL OK`; `build_sim.bat
 all` must end with the simulator CLI reporting `unpack mismatches 0` for

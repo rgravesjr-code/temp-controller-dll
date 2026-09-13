@@ -21,7 +21,7 @@ tests/test_main.c      181 unit checks, compiled with the source (no DLL needed)
 tests/oracle_test.py   ctypes: TcStep -> CanTp_PackSgl -> BAM, bit-for-bit vs cantools + tempctl.dbc
 tools/make_tempctl_dbc.py   generates dbc/tempctl.dbc and (via CanTp's dbc2tables) dbc/tables/
 dbc/                   tempctl.dbc + CanTp tables (JSON, CSV for LabVIEW, C header)
-third_party/cantp/     CanTp v1.0.0 release package (see VENDORED.txt)
+third_party/cantp/     CanTp v1.2.0 release package (see VENDORED.txt)
 sim/TempSim.Core       plant / sensor / relay models, P/Invoke, scenarios, CSV + .ncl, SocketCAN
 sim/TempSim.Cli        console simulator (win-x64, linux-x64, linux-arm64)
 sim/TempSim.Wpf        Windows simulator with graph, lamps, fault injection, frames panel
@@ -41,7 +41,7 @@ build.bat all                                :: dll x64+x86, 181-check gates, .s
 python tools\make_tempctl_dbc.py --tables    :: dbc\tempctl.dbc + dbc\tables\
 python tests\oracle_test.py                  :: ALL OK
 build_sim.bat all                            :: build\sim\{win-x64,linux-x64,linux-arm64} + headless checks
-package_dist.bat 2.0.0 [zip-password]        :: dist\TempCtl_v2.0.0*
+package_dist.bat 2.0.1 [zip-password]        :: dist\TempCtl_v2.0.1*
 ```
 
 ## Use

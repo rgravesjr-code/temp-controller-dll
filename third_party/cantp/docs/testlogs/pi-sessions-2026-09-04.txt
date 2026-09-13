@@ -1,0 +1,30 @@
+CanTp v1.1.0 live session tests on the Raspberry Pi bench, 2026-09-04
+sender pi-engine (192.168.1.148) can1, receiver pi-trans (192.168.1.178) can0; libcantp.so (aarch64) via ctypes + python-can;
+the bench's J1939 simulator was running on the same bus (about 500 frames/s of other traffic).
+
+== test_cantp (aarch64) ==
+327 passed, 0 failed
+
+== J1939 RTS/CTS, 60 bytes, receiver window 4 ==
+cantp 0x010100 tx on can1, rts, 60 bytes, bs 4
+round 0: TxFeed final rc 2 (DONE), 10 frames sent
+round 1: TxFeed final rc 2 (DONE), 10 frames sent
+round 2: TxFeed final rc 2 (DONE), 10 frames sent
+3/3 rounds OK
+cantp 0x010100 rx on can0, rts, 60 bytes, bs 4
+round 0: decoded OK (3692 frames in, 4 responses out)
+round 1: decoded OK (495 frames in, 4 responses out)
+round 2: decoded OK (517 frames in, 4 responses out)
+3/3 rounds OK
+
+== ISO-TP 11-bit, 60 bytes, receiver BS 3 ==
+cantp 0x010100 tx on can1, isotp, 60 bytes, bs 4
+round 0: TxFeed final rc 2 (DONE), 9 frames sent
+round 1: TxFeed final rc 2 (DONE), 9 frames sent
+round 2: TxFeed final rc 2 (DONE), 9 frames sent
+3/3 rounds OK
+cantp 0x010100 rx on can0, isotp, 60 bytes, bs 3
+round 0: decoded OK (2952 frames in, 3 responses out)
+round 1: decoded OK (575 frames in, 3 responses out)
+round 2: decoded OK (551 frames in, 3 responses out)
+3/3 rounds OK

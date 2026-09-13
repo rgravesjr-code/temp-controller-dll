@@ -17,3 +17,20 @@ EXPORTS
     CanTp_RecordSizeFor
     CanTp_MakeRecord
     CanTp_NclHeader
+    CanTp_DefineMux
+    CanTp_SessionConfig
+    CanTp_TxStart
+    CanTp_TxStartSgl
+    CanTp_TxFeed
+    CanTp_TxState
+    CanTp_TxReset
+    CanTp_RxStep
+    CanTp_RxStepSgl
+    CanTp_RxState
+    CanTp_DefineFlat
+    CanTp_FlatSize
+    CanTp_GetDef
+    CanTp_Defaults
+    CanTp_FrameLengths
+    CanTp_Transfer
+    CanTp_TransferSgl

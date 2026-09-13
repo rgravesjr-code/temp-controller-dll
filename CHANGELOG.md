@@ -2,6 +2,18 @@
 
 ---
 
+## v2.0.1 - 2026-09-12
+
+Maintenance release: no controller change. Re-vendors **CanTp v1.2.0**
+(`third_party\cantp\`), which adds the flattened LabVIEW `J1939Msg(V4)`
+cluster as a message-definition input (`CanTp_DefineFlat`), a per-frame
+length array and the one-call `CanTp_Transfer`, plus a 32-bit ARM build, after
+Scott's "CanParsing" notes. The TempCtl message can now be loaded into CanTp
+either from `dbc\tables\` or from an ECD cluster of the same layout; the
+simulator still uses `CanTp_PackSgl` / `CanTp_Unpack` and is rebuilt against
+the new binaries. `TcVersion()` reports 2.0.1.
+
+
 ## v2.0.0 - 2026-09-04
 
 Breaking release: the controller is now signals-in / signals-out only, and all

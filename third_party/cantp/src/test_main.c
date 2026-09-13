@@ -42,7 +42,7 @@ static void test_records(void)
     CHECK(CanTp_RecordSize(rec, 80) == 32 && CanTp_RecordSize(rec, 31) == CANTP_ERR_RECORD && CanTp_RecordSize(rec, 10) == CANTP_ERR_RECORD);
     CHECK(CanTp_NclHeader(hdr, 12) == CANTP_OK && hdr[0] == 0x4E && hdr[1] == 0x49 && hdr[8] == 1);
     CHECK(CanTp_NclHeader(hdr, 11) == CANTP_ERR_ARG);
-    CHECK(CanTp_Version() == 0x010000);
+    CHECK(CanTp_Version() == 0x010200);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -62,9 +62,10 @@ static void test_define_errors(void)
     msgdef(m, 0x123, 0, 9, 0, -1, 255, 0);  CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);   /* classic > 8 */
     msgdef(m, 0x123, 0, 65, 2, -1, 255, 0); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);   /* FD > 64 */
     msgdef(m, 0x123, 0, 20, 1, -1, 255, 0); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);   /* BAM needs 29-bit */
-    msgdef(m, 0x18FF0080, 1, 20, 1, -1, 0x10, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_TRANSPORT); /* DA != global */
-    msgdef(m, 0x18FF0080, 1, 20, 4, -1, 255, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_TRANSPORT);
-    msgdef(m, 0x18FF0080, 1, 20, 5, -1, 255, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_TRANSPORT);
+    msgdef(m, 0x18FF0080, 1, 20, 1, -1, 0x10, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);   /* BAM: DA != global */
+    msgdef(m, 0x18FF0080, 1, 20, 4, -1, 255, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);   /* RTS/CTS: DA global */
+    msgdef(m, 0x18000080, 1, 20, 4, -1, 0x10, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_OK); CanTp_Clear(0);
+    msgdef(m, 0x123, 0, 20, 5, -1, 255, 0xCC);      CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_OK); CanTp_Clear(0);   /* ISO-TP 11-bit */
     msgdef(m, 0x18FF0080, 1, 20, 9, -1, 255, 255); CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);
     msgdef(m, 0x123, 0, 8, 0, 5, 255, 0);   CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);   /* SA on 11-bit */
     msgdef(m, 0x800, 0, 8, 0, -1, 255, 0);  CHECK(CanTp_Define(0, m, 8, NULL, 0) == CANTP_ERR_MSGDEF);
@@ -320,6 +321,9 @@ static void test_ec1_like(void)
     CHECKF(u[0], 10); CHECKF(u[1], 2500); CHECKF(u[2], 3.2); CHECKF(u[3], 2779);
 }
 
+#include "test_release2.inc"
+#include "test_release3.inc"
+
 int main(void)
 {
     test_records();
@@ -328,6 +332,12 @@ int main(void)
     test_canfd();
     test_bam();
     test_ec1_like();
+    test_mux();
+    test_rts_cts();
+    test_isotp();
+    test_define_flat_real();
+    test_define_flat_synthetic();
+    test_transfer();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -1,7 +1,8 @@
 @echo off
 setlocal
 :: build.bat - cantp.dll (x64 + x86, MSVC) + test exes, then libcantp.so for
-:: linux-x64 (cRIO-904x/905x/906x) and linux-arm64 (Raspberry Pi 4/5) via zig.
+:: linux-x64 (cRIO-904x/905x/906x), linux-arm64 (Raspberry Pi 4/5) and linux-armhf
+:: (32-bit ARM, LabVIEW LINX / Hobbyist toolkit chroot) via zig.
 :: Usage: build.bat [all|win|test|linux]   (default all)
 set "ROOT=%~dp0"
 set "MODE=%~1"
@@ -9,7 +10,7 @@ if "%MODE%"=="" set "MODE=all"
 set "BLIB=cantp"
 set "BTEST=test_cantp"
 set "BDEFINE=CANTP_BUILD"
-set "BSRCS="%ROOT%src\cantp.c" "%ROOT%src\bits.c" "%ROOT%src\xnet.c""
+set "BSRCS="%ROOT%src\cantp.c" "%ROOT%src\bits.c" "%ROOT%src\xnet.c" "%ROOT%src\session.c" "%ROOT%src\flat.c" "%ROOT%src\transfer.c""
 
 set "VCVARS="
 for %%d in ("%ProgramFiles(x86)%\Microsoft Visual Studio\18\BuildTools" "%ProgramFiles%\Microsoft Visual Studio\18\Community" "%ProgramFiles%\Microsoft Visual Studio\2022\Community" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools") do (
@@ -46,6 +47,8 @@ call :zigbuild x64   x86_64-linux-gnu.2.24  "x86_64 NI Linux RT / cRIO"
 if errorlevel 1 exit /b 1
 call :zigbuild arm64 aarch64-linux-gnu.2.24 "aarch64 Linux / Raspberry Pi"
 if errorlevel 1 exit /b 1
+call :zigbuild armhf arm-linux-gnueabihf.2.24 "32-bit ARM Linux / LabVIEW LINX chroot on a Raspberry Pi"
+if errorlevel 1 exit /b 1
 
 :done
 echo.
@@ -54,6 +57,7 @@ if exist "%ROOT%build\win-x64\%BLIB%.dll"        echo   build\win-x64\%BLIB%.dll
 if exist "%ROOT%build\win-x86\%BLIB%.dll"        echo   build\win-x86\%BLIB%.dll
 if exist "%ROOT%build\linux-x64\lib%BLIB%.so"    echo   build\linux-x64\lib%BLIB%.so
 if exist "%ROOT%build\linux-arm64\lib%BLIB%.so"  echo   build\linux-arm64\lib%BLIB%.so
+if exist "%ROOT%build\linux-armhf\lib%BLIB%.so"  echo   build\linux-armhf\lib%BLIB%.so
 exit /b 0
 
 :: ---- subroutine: MSVC build for one architecture -------------------------
@@ -87,12 +91,12 @@ set "TAG=%~1"
 set "TARGET=%~2"
 if not exist "%ROOT%build\linux-%TAG%" mkdir "%ROOT%build\linux-%TAG%"
 echo === lib%BLIB%.so (linux-%TAG%: %~3) ===
-"%ZIG%" cc -target %TARGET% -O2 -std=c11 -fPIC -shared -fvisibility=hidden ^
-   -Wall -Wextra -D%BDEFINE% -DNDEBUG -Wl,-soname,lib%BLIB%.so ^
+"%ZIG%" cc -target %TARGET% -O2 -g0 -std=c11 -fPIC -shared -fvisibility=hidden ^
+   -Wall -Wextra -D%BDEFINE% -DNDEBUG -Wl,-soname,lib%BLIB%.so -Wl,--strip-debug ^
    -o "%ROOT%build\linux-%TAG%\lib%BLIB%.so" %BSRCS%
 if errorlevel 1 exit /b 1
 echo === %BTEST% (linux-%TAG%) ===
-"%ZIG%" cc -target %TARGET% -O2 -std=c11 -Wall -D%BDEFINE% ^
+"%ZIG%" cc -target %TARGET% -O2 -g0 -std=c11 -Wall -D%BDEFINE% -Wl,--strip-debug ^
    -o "%ROOT%build\linux-%TAG%\%BTEST%" "%ROOT%tests\test_main.c" %BSRCS%
 if errorlevel 1 exit /b 1
 exit /b 0

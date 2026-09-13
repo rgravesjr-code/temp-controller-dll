@@ -42,7 +42,7 @@ extern "C" {
 /* ------------------------------------------------------------------------ */
 #define TC_VERSION_MAJOR 2
 #define TC_VERSION_MINOR 0
-#define TC_VERSION_PATCH 0
+#define TC_VERSION_PATCH 1
 /* Returns (major << 16) | (minor << 8) | patch. */
 TC_API uint32_t TcVersion(void);
 /* Number of elements the `in` array must have (TC_INPUT_COUNT). */
