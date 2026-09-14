@@ -1,12 +1,20 @@
 Subject: Re: Cur Temp controller spec
+(sent 2026-09-14 as a reply on Scott's 2026-09-13 thread; the Word file was
+linked from the repo rather than attached)
 
 Scott,
 
-Attached is the requirements spec for the temperature controller as it is in
-the build you are running (TempCtl v2.0.1, controller unchanged since v2.0.0).
-It is written from the header and the tests, so it describes what the DLL
+Here is the requirements spec for the temperature controller as it is in the
+build you are running (TempCtl v2.0.1, controller unchanged since v2.0.0). It
+is written from the header and the tests, so it describes what the DLL
 actually does today, not what I hope it does. Everything is numbered (R5.3,
 R7.2, ...) so you can mark up by number.
+
+Word file for markup (6 pages, direct download):
+https://github.com/rgravesjr-code/temp-controller-dll/raw/main/docs/TEMPCTL-SPEC-v2.0.1.docx
+
+Same content readable in the browser:
+https://github.com/rgravesjr-code/temp-controller-dll/blob/main/docs/TEMPCTL-SPEC-v2.0.1.md
 
 What it covers, in your order:
 
@@ -28,13 +36,10 @@ relays dropping on a NaN before the sensor is declared failed, whether a bad
 configuration should force the relays off, and the drive-to-setpoint
 behaviour. Marking those up first would let me turn the rest around quickly.
 
-Sources if you want to check anything against the code:
-
-- Header (the normative spec):
-  https://github.com/rgravesjr-code/temp-controller-dll/blob/main/src/tempctl.h
-- This document in the repo:
-  https://github.com/rgravesjr-code/temp-controller-dll/blob/main/docs/TEMPCTL-SPEC-v2.0.1.md
-- Release you are running:
-  https://github.com/rgravesjr-code/temp-controller-dll/releases/tag/v2.0.1
+If you want to check anything against the code, the header is the normative
+spec:
+https://github.com/rgravesjr-code/temp-controller-dll/blob/main/src/tempctl.h
+and the release you are running is
+https://github.com/rgravesjr-code/temp-controller-dll/releases/tag/v2.0.1
 
 Roger
