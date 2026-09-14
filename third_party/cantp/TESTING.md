@@ -1,6 +1,6 @@
 # Testing Guide — CanTp
 
-Release gate for v1.2.0: `build.bat all` ends with `440 passed, 0 failed` on
+Release gate for v1.3.0: `build.bat all` ends with `545 passed, 0 failed` on
 x64 **and** x86, all three Linux targets build, `tests\oracle_test.py` prints
 `ALL OK` (needs cantools, pretty_j1939 and can-isotp), and the Linux test
 binary has been run on at least one Linux machine. `package_dist.bat` re-runs the Windows gates and the oracle into
@@ -8,7 +8,23 @@ binary has been run on at least one Linux machine. `package_dist.bat` re-runs th
 
 ## Gates
 
-### `tests\test_main.c` — 440 checks, compiled with the sources (`test_release2.inc` = sessions + mux, `test_release3.inc` = flat cluster + Transfer)
+### `tests\test_main.c` — 545 checks, compiled with the sources (`test_release2.inc` = sessions + mux, `test_release3.inc` = flat cluster + Transfer, `test_release4.inc` = XNET frame array)
+
+- XNET Frame CAN cluster array (release 4): Scott's two LabVIEW-flattened
+  samples as fixtures → `XnetToRecords` fields, `RecordsToXnet` back
+  byte-identical, a lone frame with a count prefix, count 0 / negative
+  count / bad length / truncation → −8, sizes on −6 and NULL size queries,
+  CAN FD + CAN 2.0 + zero-timestamp records both ways, a 100-byte frame
+  with no record form; timestamps: 0 ↔ 0/0, the Unix epoch, half seconds,
+  Scott's instant byte-exact, round trips incl. the last 100 ns of a
+  second, pre-1601 clamp; `TransferXnet`: Scott's frames decoded on SA 0
+  and SA 1 slots, the frame written back bit-for-bit, a 4-frame BAM equal
+  to `RecordsToXnet(Pack)` with TP.CM / TP.DT ids and timestamps, read
+  back, remote / echo / foreign frames skipped, DT without CM → 0,
+  stateless, J1939 Data mode (one type-192 frame, id, pad, read back,
+  foreign SA, RTS/CTS without a session, refused on classic / FD),
+  classic 3-byte and CAN FD 20-byte frames, CAN 2.0 type, SGL twin, the
+  1785-byte BAM (256 frames) in both modes, every argument error.
 
 - Flattened `J1939Msg(V4)` clusters (release 3): three real clusters
   extracted from `J1939_NGHD_V130.ecd` (`tests\flat_fixtures.h`: ZNVW,
@@ -86,6 +102,7 @@ unpack) and **pretty_j1939** (BAM reassembly):
 | (c) | real messages from `J1939_NGHD_V130.dbc` converted by `dbc2tables.py`: EEC1 (8), EC1 (40), RC (19), ET1 (8), TCFG (50), 20 random value sets each, bytes and decoded values, TP ids and frame counts | 100 |
 | (d) | BAM payload lengths 9..39, 63..65, 100, 255, 256, 700, 1784, 1785: reassembly by pretty_j1939 and by `CanTp_RxFeed` with a foreign frame after every packet | 40 |
 | (h) | every cluster of `J1939_NGHD_V130.ecd` through `CanTp_DefineFlat`: `GetDef` rows and `Defaults` vs the Python mirror in `tools\ecdflat.py`, `FlatSize` walking the whole flattened array; ECD vs DBC wire layout by channel name; 12 real messages packed through `CanTp_Transfer` with the length array, bit-for-bit vs cantools, read back through `Transfer` | 754 + 12 × 10 |
+| (i) | the XNET Frame CAN cluster array vs `tools\xnetflat.py`: Scott's two LabVIEW samples (`tests\fixtures`) through the converters and back byte-exact, timestamp conversion on 3000 random instants vs a Python big-int reference (both directions, round trips), EEC1 / EC1 / RC / ET1 / TCFG through `TransferXnet` in frame mode (== Pack's records, payload vs cantools, read back) and J1939 Data mode (one type-192 frame, payload vs cantools, effective id, read back) | 2 + 9000 + 5 × 10 |
 
 ```bat
 pip install cantools pretty_j1939 can-isotp
@@ -122,6 +139,14 @@ from `CanTp_RxStep`, the sender drives `CanTp_TxFeed` from the frames it
 reads back. Both print `3/3 rounds OK`.
 
 ## Release record
+
+v1.3.0, 2026-09-14: Windows x64/x86 545/545; oracle ALL OK (sections a–i,
+(i): Scott's LabVIEW samples byte-exact, 3000 timestamp instants, 5 real
+messages × 10 value sets through `TransferXnet` in both modes); Raspberry
+Pi 5 aarch64 545/545 and a static 32-bit armhf build of the same sources
+545/545 under the 64-bit kernel, arm64 `.so` loads and counts the sample
+frames (`docs\testlogs\pi-2026-09-14.txt`). cRIO x86_64: built and
+ELF-inspected, not yet executed.
 
 v1.2.0, 2026-09-12: Windows x64/x86 440/440; oracle ALL OK (sections a–h,
 (h): 753 of 754 `.ecd` clusters defined and matched, ETC2 rejected for its

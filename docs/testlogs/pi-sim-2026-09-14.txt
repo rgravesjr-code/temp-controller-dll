@@ -1,0 +1,258 @@
+TempCtl v2.0.2 simulator (linux-arm64, CanTp 1.3.0 vendored) - Raspberry Pi 5, 2026-09-14T16:19:39Z
+TempSim.Cli 2.0.0  (tempctl 2.0.2, cantp 1.3.0, linux-arm64)
+
+=== warmup: Cold start at ambient: filter warm-up, heat pending, heating to setpoint, then in-band cycling.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0   44.5   45.1   0    0    0   0     0  InBand        1       0      0
+    35.0  49.0   49.3   48.8   49.4   0    0    0   0     0  InBand        1       0      0
+    40.0  46.3   46.6   46.1   46.7   0    0    0   0     0  InBand        1       0      0
+    45.0  50.9   51.2   50.7   50.4   0    0    0   0     0  InBand        1       0      0
+    50.0  48.0   48.3   47.8   48.3   0    0    0   0     0  InBand        1       0      0
+    55.0  45.3   45.6   45.1   45.7   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  49.7   50.0   49.5   50.1   0    0    0   0     0  InBand        1       0      0
+    65.0  46.9   47.2   46.7   47.3   0    0    0   0     0  InBand        1       0      0
+    70.0  44.3   44.6   44.1   44.7   1    0    1   0     0  Heating       1       0      0
+    75.0  48.6   48.9   48.4   49.0   0    0    0   0     0  InBand        1       0      0
+    80.0  45.9   46.2   45.7   46.3   0    0    0   0     0  InBand        1       0      0
+    85.0  50.5   50.8   50.3   50.8   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0  47.6   47.9   47.4   47.9   0    0    0   0     0  InBand        1       0      0
+    95.0  44.9   45.2   44.7   45.3   0    0    0   0     0  InBand        1       0      0
+   100.0  49.3   49.6   49.1   49.7   0    0    0   0     0  InBand        1       0      0
+   105.0  46.5   46.8   46.3   46.9   0    0    0   0     0  InBand        1       0      0
+   110.0  48.2   48.5   48.0   47.7   1    0    1   0     0  Heating       1       0      0
+   115.0  48.2   48.5   48.0   48.6   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0  45.5   45.8   45.3   45.9   0    0    0   0     0  InBand        1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/warmup.csv, /tmp/tempsim-out/warmup.ncl
+
+=== setpoint-step: Setpoint 50 -> 30 at 60 s (cooler engages), -> 70 at 90 s.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0   44.5   45.1   0    0    0   0     0  InBand        1       0      0
+    35.0  49.0   49.3   48.8   49.4   0    0    0   0     0  InBand        1       0      0
+    40.0  46.3   46.6   46.1   46.7   0    0    0   0     0  InBand        1       0      0
+    45.0  50.9   51.2   50.7   50.4   0    0    0   0     0  InBand        1       0      0
+    50.0  48.0   48.3   47.8   48.3   0    0    0   0     0  InBand        1       0      0
+    55.0  45.3   45.6   45.1   45.7   0    0    0   0     0  InBand        1       0      0
+      ->    60.0 s  Setpoint 30
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  49.7   50.0   49.5   50.1   0    0    0   0     0  CoolPending   1       0    500
+    65.0  28.2   28.5   28.0   28.5   0    0    0   0     0  InBand        1       0      0
+    70.0  27.4   27.7   27.2   27.7   0    0    0   0     0  InBand        1       0      0
+    75.0  26.7   27.0   26.5   27.0   0    0    0   0     0  InBand        1       0      0
+    80.0  26.1   26.4   25.9   26.4   0    0    0   0     0  InBand        1       0      0
+    85.0  25.5   25.8   25.3   25.8   0    0    0   0     0  InBand        1       0      0
+      ->    90.0 s  Setpoint 70
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0  25.0   25.3   24.8   25.3   0    0    0   0     0  HeatPending   1       0    500
+    95.0  50.3   50.6   50.1   49.8   1    0    1   0     0  Heating       1       0      0
+   100.0  69.5   69.8   69.3   69.9   0    0    0   0     0  InBand        1       0      0
+   105.0  64.8   65.1   64.6   65.2   0    0    0   0     0  InBand        1       0      0
+   110.0  67.8   68.1   67.6   68.2   0    0    0   0     0  InBand        1       0      0
+   115.0  69.2   69.5   69.0   68.7   1    0    1   0     0  Heating       1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0  66.1   66.4   65.9   66.6   0    0    0   0     0  InBand        1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/setpoint-step.csv, /tmp/tempsim-out/setpoint-step.ncl
+
+=== sensor-failover: Sensor 1 opens (NaN) at 40 s: relays drop, T1 fails after ErrorTimeout, control fails over to sensor 2 (degraded). Sensor 1 returns at 60 s but stays failed until the operator reset at 80 s.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0   44.5   45.1   0    0    0   0     0  InBand        1       0      0
+    35.0  49.0   49.3   48.8   49.4   0    0    0   0     0  InBand        1       0      0
+      ->    40.0 s  Sensor 1 open
+    40.0  46.3    NaN   46.1   46.7   0    0    0   0     0  ErrorPending  1    2000      0
+    45.0  50.8    NaN   50.6   50.6   0    0    0   0     4  Degraded      2       0      0
+    50.0  47.8    NaN   47.6   47.7   0    0    0   0     4  Degraded      2       0      0
+    55.0  45.2    NaN   45.0   45.1   0    0    0   0     4  Degraded      2       0      0
+      ->    60.0 s  Sensor 1 back
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  49.5   49.8   49.3   49.3   0    0    0   0     4  Degraded      2       0      0
+    65.0  46.7   47.0   46.5   46.5   0    0    0   0     4  Degraded      2       0      0
+    70.0  51.2   51.5   51.0   51.1   0    0    0   0     4  Degraded      2       0      0
+    75.0  48.2   48.5   48.0   48.1   0    0    0   0     4  Degraded      2       0      0
+      ->    80.0 s  Operator reset
+    80.0  45.5   45.8   45.3   45.9   0    0    0   0     0  InBand        1       0      0
+    85.0  50.0   50.3   49.8   50.4   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0  47.2   47.5   47.0   47.5   0    0    0   0     0  InBand        1       0      0
+    95.0  44.6   44.9   44.4   45.0   0    0    0   0     0  HeatPending   1       0    400
+   100.0  48.9   49.2   48.7   49.3   0    0    0   0     0  InBand        1       0      0
+   105.0  46.1   46.4   45.9   46.5   0    0    0   0     0  InBand        1       0      0
+   110.0  50.7   51.0   50.5   51.1   0    0    0   0     0  InBand        1       0      0
+   115.0  47.8   48.1   47.6   48.2   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0  45.2   45.5   45.0   45.5   0    0    0   0     0  InBand        1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/sensor-failover.csv, /tmp/tempsim-out/sensor-failover.ncl
+
+=== both-sensors-fail: Sensor 2 sticks at 200 at 30 s (T2 hi, degraded), then sensor 1 opens at 50 s: stopped. Reset at 70 s with both healthy.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+      ->    30.0 s  Sensor 2 stuck at 200
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0  200.0   45.1   0    0    0   0     0  ErrorPending  1    2000      0
+    35.0  49.0   49.3  200.0   49.4   0    0    0   0    72  Degraded      1       0      0
+    40.0  46.3   46.6  200.0   46.7   0    0    0   0    72  Degraded      1       0      0
+    45.0  50.9   51.2  200.0   50.4   0    0    0   0    72  Degraded      1       0      0
+      ->    50.0 s  Sensor 1 open
+    50.0  48.0    NaN  200.0   48.4   0    0    0   0    72  ErrorPending  1    2000      0
+    55.0  45.3    NaN  200.0   48.4   0    0    0   0    76  Stopped       1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  42.9    NaN  200.0   48.4   0    0    0   0    76  Stopped       1       0      0
+    65.0  40.7    NaN  200.0   48.4   0    0    0   0    76  Stopped       1       0      0
+      ->    70.0 s  Sensors healthy, reset
+    70.0  38.7   39.0   38.5   46.0   0    0    0   0     0  ErrorPending  1    2000      0
+    75.0  49.3   49.6   49.1   49.7   0    0    0   0     0  InBand        1       0      0
+    80.0  46.5   46.8   46.3   46.9   0    0    0   0     0  InBand        1       0      0
+    85.0  48.2   48.5   48.0   47.7   1    0    1   0     0  Heating       1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0  48.2   48.5   48.0   48.6   0    0    0   0     0  InBand        1       0      0
+    95.0  45.5   45.8   45.3   45.9   0    0    0   0     0  InBand        1       0      0
+   100.0  50.0   50.3   49.8   50.4   0    0    0   0     0  InBand        1       0      0
+   105.0  47.2   47.5   47.0   47.5   0    0    0   0     0  InBand        1       0      0
+   110.0  44.6   44.9   44.4   44.9   0    0    0   0     0  HeatPending   1       0    400
+   115.0  48.9   49.2   48.7   49.3   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0  46.1   46.4   45.9   46.5   0    0    0   0     0  InBand        1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/both-sensors-fail.csv, /tmp/tempsim-out/both-sensors-fail.ncl
+
+=== disagree: Sensor 2 drifts +8 deg at 40 s: disagreement bit after ErrorTimeout, control continues on sensor 1.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0   44.5   45.1   0    0    0   0     0  InBand        1       0      0
+    35.0  49.0   49.3   48.8   49.4   0    0    0   0     0  InBand        1       0      0
+      ->    40.0 s  Sensor 2 offset +8
+    40.0  46.3   46.6   54.3   46.7   0    0    0   0     0  InBand        1       0      0
+    45.0  50.9   51.2   58.9   50.4   0    0    0   0    64  InBand        1       0      0
+    50.0  48.0   48.3   56.0   48.3   0    0    0   0    64  InBand        1       0      0
+    55.0  45.3   45.6   53.3   45.7   0    0    0   0    64  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  49.7   50.0   57.7   50.1   0    0    0   0    64  InBand        1       0      0
+    65.0  46.9   47.2   54.9   47.3   0    0    0   0    64  InBand        1       0      0
+    70.0  44.3   44.6   52.3   44.7   1    0    1   0    64  Heating       1       0      0
+    75.0  48.6   48.9   56.6   49.0   0    0    0   0    64  InBand        1       0      0
+    80.0  45.9   46.2   53.9   46.3   0    0    0   0    64  InBand        1       0      0
+    85.0  50.5   50.8   58.5   50.8   0    0    0   0    64  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0  47.6   47.9   55.6   47.9   0    0    0   0    64  InBand        1       0      0
+    95.0  44.9   45.2   52.9   45.3   0    0    0   0    64  InBand        1       0      0
+   100.0  49.3   49.6   57.3   49.7   0    0    0   0    64  InBand        1       0      0
+   105.0  46.5   46.8   54.5   46.9   0    0    0   0    64  InBand        1       0      0
+   110.0  48.2   48.5   56.2   47.7   1    0    1   0    64  Heating       1       0      0
+   115.0  48.2   48.5   56.2   48.6   0    0    0   0    64  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0  45.5   45.8   53.5   45.9   0    0    0   0    64  InBand        1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors Disagree
+    -> /tmp/tempsim-out/disagree.csv, /tmp/tempsim-out/disagree.ncl
+
+=== feedback-fault: Heater relay sticks open at 30 s (feedback never follows the command): heater feedback bit, operation continues. Cooler sticks closed at 80 s: cooler feedback bit, and the cooler drives the plant below LoLimit until both sensors fail lo and the controller stops.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+      ->    30.0 s  Heater stuck open
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0   44.5   45.1   0    0    0   0     0  InBand        1       0      0
+    35.0  42.4   42.7   42.2   42.7   1    0    0   0   128  Heating       1       0      0
+    40.0  40.2   40.5   40.0   40.6   1    0    0   0   128  Heating       1       0      0
+    45.0  38.3   38.6   38.1   38.7   1    0    0   0   128  Heating       1       0      0
+    50.0  36.6   36.9   36.4   36.9   1    0    0   0   128  Heating       1       0      0
+    55.0  35.0   35.3   34.8   35.3   1    0    0   0   128  Heating       1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  33.5   33.8   33.3   33.9   1    0    0   0   128  Heating       1       0      0
+    65.0  32.3   32.6   32.1   32.6   1    0    0   0   128  Heating       1       0      0
+    70.0  31.1   31.4   30.9   31.4   1    0    0   0   128  Heating       1       0      0
+    75.0  30.0   30.3   29.8   30.4   1    0    0   0   128  Heating       1       0      0
+      ->    80.0 s  Cooler stuck closed
+    80.0  29.1   29.4   28.9   29.4   1    0    0   1   128  Heating       1       0      0
+    85.0  -0.4   -0.1   -0.6    0.8   1    0    0   1   384  ErrorPending  1     300      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0 -27.0  -26.7  -27.2  -25.9   0    0    0   1   402  Stopped       1       0      0
+    95.0 -51.1  -50.8  -51.3  -50.1   0    0    0   1   402  Stopped       1       0      0
+   100.0 -72.9  -72.6  -73.1  -72.0   0    0    0   1   402  Stopped       1       0      0
+   105.0 -92.6  -92.3  -92.8  -91.8   0    0    0   1   402  Stopped       1       0      0
+   110.0 -110.5  -110.2  -110.7  -109.7   0    0    0   1   402  Stopped       1       0      0
+   115.0 -126.6  -126.3  -126.8  -125.9   0    0    0   1   402  Stopped       1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0 -141.2  -140.9  -141.4  -140.5   0    0    0   1   402  Stopped       1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status Stopped, errors T1Lo|T2Lo|HeaterFeedback|CoolerFeedback
+    -> /tmp/tempsim-out/feedback-fault.csv, /tmp/tempsim-out/feedback-fault.ncl
+
+=== single-sensor: Minimum system (one sensor, no feedback): sensor opens at 50 s -> stopped after ErrorTimeout; reset at 70 s.
+     5.0  45.3   45.6   45.1   44.8   1    0    1   0     0  Heating       1       0      0
+    10.0  48.4   48.7   48.2   48.8   0    0    0   0     0  InBand        1       0      0
+    15.0  45.7   46.0   45.5   46.0   0    0    0   0     0  InBand        1       0      0
+    20.0  50.2   50.5   50.0   50.6   0    0    0   0     0  InBand        1       0      0
+    25.0  47.3   47.6   47.1   47.7   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    30.0  44.7   45.0   44.5   45.1   0    0    0   0     0  InBand        1       0      0
+    35.0  49.0   49.3   48.8   49.4   0    0    0   0     0  InBand        1       0      0
+    40.0  46.3   46.6   46.1   46.7   0    0    0   0     0  InBand        1       0      0
+    45.0  50.9   51.2   50.7   50.4   0    0    0   0     0  InBand        1       0      0
+      ->    50.0 s  Sensor 1 open
+    50.0  48.0    NaN   47.8   48.4   0    0    0   0     0  ErrorPending  1    2000      0
+    55.0  45.3    NaN   45.1   48.4   0    0    0   0     4  Stopped       1       0      0
+      ->    56.0 s  Sensor 1 back
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    60.0  42.9   43.2   42.7   43.2   0    0    0   0     4  Stopped       1       0      0
+    65.0  40.7   41.0   40.5   41.1   0    0    0   0     4  Stopped       1       0      0
+      ->    70.0 s  Operator reset
+    70.0  38.7   39.0   38.5   39.1   0    0    0   0     0  HeatPending   1       0    500
+    75.0  49.3   49.6   49.1   49.7   0    0    0   0     0  InBand        1       0      0
+    80.0  46.5   46.8   46.3   46.9   0    0    0   0     0  InBand        1       0      0
+    85.0  48.7   49.0   48.5   48.2   1    0    1   0     0  Heating       1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+    90.0  48.2   48.5   48.0   48.6   0    0    0   0     0  InBand        1       0      0
+    95.0  45.5   45.8   45.3   45.9   0    0    0   0     0  InBand        1       0      0
+   100.0  50.0   50.3   49.8   50.4   0    0    0   0     0  InBand        1       0      0
+   105.0  47.1   47.4   46.9   47.5   0    0    0   0     0  InBand        1       0      0
+   110.0  44.5   44.8   44.3   44.9   0    0    0   0     0  HeatPending   1       0    400
+   115.0  48.9   49.2   48.7   49.2   0    0    0   0     0  InBand        1       0      0
+       t   plant  temp1  temp2   ctrl  heat cool  hFb cFb  err   status        act  errRem  dbRem
+   120.0  46.1   46.4   45.9   46.5   0    0    0   0     0  InBand        1       0      0
+    1200 ticks, 10800 raw frames, unpack mismatches 0, final status InBand, errors none
+    -> /tmp/tempsim-out/single-sensor.csv, /tmp/tempsim-out/single-sensor.ncl
+rc=0
+
+=== sha256 of the Pi outputs vs the Windows run (build\sim\win-x64-out) ===
+identical  both-sensors-fail.ncl  fb62858714fae9adfe57f414ed25d70fc12e6380e9bb9be7b47437d84ed000df
+identical  disagree.ncl  6ff6323bd5f4837bf497bf25aa5aff4ae27d5030416df236ffa47abf928f5944
+identical  feedback-fault.ncl  ae0685a6a495906702dda0d525a744fc177adf5f879843037925718eb7b52524
+identical  sensor-failover.ncl  a273095f968ad08eb92e6c193566d468bab67cb548b82706c17b9b26fc29c132
+identical  setpoint-step.ncl  183953a79ad31bfdb31cb9940ebe67d383b23083b7cb4185031e9355f0bc427d
+identical  single-sensor.ncl  a1eaa7cb9f87f60eea6e0bece42315921da9af2f87cfcdd4131ab15d66df2b93
+identical  warmup.ncl  0470b7fb4ae864393e04c9ec9441747ea516f97d9b07aa280eb620e57dc8d464
+identical  both-sensors-fail.csv  a0ca5c5c272f4ddc30953166b3cf714dccc452976b6f78f188971a00f2fcd2fc
+identical  disagree.csv  d895f4eb2aec9921364283191e55a4288856acebc8d0628197e5e0585166acc7
+identical  feedback-fault.csv  1ead796ed19a2e541b17c7b62c3daa1e377998bf95ab24ceacae69f062c7670d
+identical  sensor-failover.csv  0bfef8863c222b53f972cb0fccad93566b4697b20a3db1057e980c9bdb61da93
+identical  setpoint-step.csv  d7f88bc91714055cef415a9906404305f178e71e1741c7dcc866fe8bfcc549bd
+identical  single-sensor.csv  4b2c66ee645bd77f0f875ceb821fec98bef8a281e290fb5c252d5587514b4c98
+identical  warmup.csv  61d0bd05054cc640845ceae93863955fb66e20ba262f7264257ca54a1c54185e
+14 identical, 0 different

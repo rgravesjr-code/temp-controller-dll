@@ -141,3 +141,87 @@ LabVIEW's XNET logfile VIs read directly.
   the FD records before it, or simply use `CanTp_RecordSize` in a loop.
 - `CanTp_Transfer` in write mode fills the `frameLens` array for you; in
   read mode it accepts the same array and checks it against the records.
+
+## 6. The XNET Frame CAN cluster array (v1.3.0)
+
+`CanTp_TransferXnet`, `CanTp_RecordsToXnet` and `CanTp_XnetToRecords` use a
+second format: the bytes LabVIEW's **Flatten To String** produces for a 1-D
+array of the NI-XNET **XNET Frame CAN** cluster, big-endian with array
+sizes prepended (the defaults). The element order is the cluster's *type*
+order, taken from the `XNET Frame CAN.ctl` type descriptor, and it is not
+the front-panel order:
+
+| Bytes | Field |
+|---|---|
+| 4 | I32 frame count |
+| 8 | I64 timestamp: seconds since 1904-01-01 00:00:00 UTC |
+| 8 | U64 timestamp: fraction of a second in units of 2⁻⁶⁴ |
+| 4 | I32 payload length |
+| n | payload |
+| 4 | U32 identifier, bare 11- or 29-bit |
+| 1 | type (0 CAN Data, 1 CAN Remote, 2 CAN Bus Error, 8 CAN 2.0 Data, 16 CAN FD Data, 24 CAN FD+BRS Data, 192 J1939 Data, 224 Delay, 225 Log Trigger, 226 Start Trigger) |
+| 1 | extended? |
+| 1 | echo? |
+
+So a frame is 27 + n bytes and the array is 4 + Σ(27 + n). The type
+numbers are NI-XNET's own (`nxFrameType_*`) and equal the record's type
+byte, so the two formats convert without a table.
+
+### 6.1 Two frames flattened by LabVIEW (Scott, 2026-09-14)
+
+`tests/fixtures/xnet_two_frames_scott_2026-09-14.bin`, 74 bytes:
+
+```
+00 00 00 02                                        I32 count = 2
+-- frame 0 --
+00 00 00 00 E6 CD A5 A2                            I64 seconds = 3872236962 -> 2026-09-14 13:22:42 UTC
+77 86 B6 68 06 79 96 C4                            U64 fraction = 0.4668993 s
+00 00 00 08                                        I32 payload length = 8
+01 02 03 04 05 06 07 08                            payload
+18 FE F1 00                                        U32 identifier = 0x18FEF100 (PGN FEF1 from SA 0)
+00                                                 type = 0 CAN Data
+01                                                 extended? = TRUE
+00                                                 echo? = FALSE
+-- frame 1 --
+00 00 00 00 E6 CD A5 A2  77 86 B6 68 06 79 96 C4   same instant
+00 00 00 08  10 20 30 40 50 60 70 80               8 bytes
+18 FE F1 01  00  01  00                            0x18FEF101, CAN Data, extended, no echo
+```
+
+`CanTp_XnetToRecords` turns this into two 24-byte records with timestamp
+`0x01DD444C1F523B41` (134338657624668993 × 100 ns since 1601) and identifiers
+`0x38FEF100` / `0x38FEF101` (bit 29 set = extended); `CanTp_RecordsToXnet`
+gives the 74 bytes back exactly, including the fraction.
+
+### 6.2 What the library writes
+
+For the 20-byte BAM of §2.3-style messages, `xnetMode` 0 produces the same
+frames as `CanTp_Pack` — TP.CM under `1CECFF<SA>` then the TP.DT packets
+under `1CEBFF<SA>`, all type CAN Data, extended, echo? FALSE — as an array
+of `4 + 4 × 35` bytes. With `timestamp100ns` = 0 the timestamp fields are
+all zero (LabVIEW's 1904-01-01 "not set"), otherwise they carry the
+converted time, and `spacing100ns` advances each frame like `CanTp_Pack`.
+
+`xnetMode` 1 produces one frame of type J1939 Data (192) with the whole
+payload (length = the message's byte count, pad applied) under the message
+id with SA and DA applied, for an NI-XNET J1939 session:
+
+```
+00 00 00 01                                        count 1
+00.. (16 bytes)                                    timestamp
+00 00 00 14                                        20 bytes
+<20 payload bytes>
+18 FF 20 80                                        0x18FF2080
+C0  01  00                                         J1939 Data, extended, no echo
+```
+
+### 6.3 Timestamps
+
+Record: U64, 100 ns since 1601-01-01. LabVIEW: I64 seconds since
+1904-01-01 plus a U64 fraction in units of 2⁻⁶⁴ (the 16 flattened bytes).
+The offset between the epochs is 9 561 628 800 s. `CanTp_TimeToLabView`
+computes `fraction = rem × 2⁶⁴ / 10⁷` exactly (integer arithmetic) and
+`CanTp_TimeFromLabView` rounds back to the nearest 100 ns, so a record
+time survives a round trip unchanged and a LabVIEW time is reproduced
+byte-exact when it came from a 100 ns source (Scott's sample above does).
+0 maps to 0/0 in both directions.

@@ -10,7 +10,7 @@ if "%MODE%"=="" set "MODE=all"
 set "BLIB=cantp"
 set "BTEST=test_cantp"
 set "BDEFINE=CANTP_BUILD"
-set "BSRCS="%ROOT%src\cantp.c" "%ROOT%src\bits.c" "%ROOT%src\xnet.c" "%ROOT%src\session.c" "%ROOT%src\flat.c" "%ROOT%src\transfer.c""
+set "BSRCS="%ROOT%src\cantp.c" "%ROOT%src\bits.c" "%ROOT%src\xnet.c" "%ROOT%src\session.c" "%ROOT%src\flat.c" "%ROOT%src\transfer.c" "%ROOT%src\xnetflat.c""
 
 set "VCVARS="
 for %%d in ("%ProgramFiles(x86)%\Microsoft Visual Studio\18\BuildTools" "%ProgramFiles%\Microsoft Visual Studio\18\Community" "%ProgramFiles%\Microsoft Visual Studio\2022\Community" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools") do (

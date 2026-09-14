@@ -49,7 +49,7 @@ extern "C" {
 #endif
 
 #define CANTP_VERSION_MAJOR 1
-#define CANTP_VERSION_MINOR 2
+#define CANTP_VERSION_MINOR 3
 #define CANTP_VERSION_PATCH 0
 /* (major << 16) | (minor << 8) | patch */
 CANTP_API uint32_t CanTp_Version(void);
@@ -74,6 +74,7 @@ CANTP_API uint32_t CanTp_Version(void);
 #define CANTP_ERR_BUSY      -12   /* TxStart while a transmit session is running      */
 #define CANTP_ERR_MUXDEF    -13   /* bad multiplex definition row                     */
 #define CANTP_ERR_FLAT      -14   /* bytes are not a flattened J1939Msg(V4) cluster   */
+/* CANTP_ERR_RECORD (-8) also covers a malformed flattened XNET frame array  */
 
 /* ------------------------------------------------------------------------ */
 /* Limits                                                                    */
@@ -371,6 +372,82 @@ CANTP_API int32_t CanTp_TransferSgl(int32_t slot, int32_t mode, float* values, i
                                     uint8_t* frames, int32_t framesLen, uint8_t* frameLens, int32_t frameLensLen,
                                     uint64_t timestamp100ns, uint64_t spacing100ns,
                                     int32_t* bytesUsed, int32_t* nFrames);
+
+/* ------------------------------------------------------------------------ */
+/* Release 4 (v1.3.0): the flattened NI-XNET "XNET Frame CAN" cluster array  */
+/* ------------------------------------------------------------------------ */
+/*
+ * A second frame format next to the raw records: the bytes LabVIEW's
+ * "Flatten To String" produces for a 1-D array of the NI-XNET "XNET Frame
+ * CAN" cluster (big-endian, sizes prepended - the defaults), so LabVIEW
+ * goes XNET Read (Frame CAN) -> Flatten To String -> CanTp, and CanTp ->
+ * Unflatten From String (array of XNET Frame CAN) -> XNET Write (Frame CAN)
+ * with no byte handling. Layout (element order of the cluster's type
+ * descriptor, which is not the panel order):
+ *
+ *   I32 count, then per frame (27 + payload bytes):
+ *     I64 timestamp seconds since 1904-01-01 UTC, U64 fraction (2^-64 s)
+ *     I32 payload length, U8 payload[]
+ *     U32 identifier (bare 11/29-bit), U8 type, U8 extended?, U8 echo?
+ *
+ * type: 0 CAN Data, 1 CAN Remote, 2 CAN Bus Error, 8 CAN 2.0 Data, 16 CAN
+ * FD Data, 24 CAN FD+BRS Data, 192 J1939 Data, 224 Delay, 225 Log Trigger,
+ * 226 Start Trigger - the NI-XNET frame type values, the same numbers as
+ * the record's type byte. Frames the library writes carry echo? = 0 and, when
+ * timestamp100ns is 0, a zero timestamp (1904-01-01, "not set").
+ *
+ * CanTp_TransferXnet is CanTp_Transfer on this format, without the length
+ * array (every payload carries its own length):
+ *   mode CANTP_MODE_WRITE: values in -> xnet out.
+ *     xnetMode CANTP_XNET_FRAMES (0): the frames of one sequence as CAN Data
+ *        (or CAN FD) frames, TP.CM first then TP.DT - for a raw CAN frame
+ *        session; the same frames as CanTp_Pack.
+ *     xnetMode CANTP_XNET_J1939 (1): one J1939 Data frame (type 192)
+ *        carrying the whole payload under the message id (SA / DA applied),
+ *        for an NI-XNET session whose database uses the J1939 application
+ *        protocol - then XNET runs the transport protocol itself. J1939
+ *        transports only (CANTP_ERR_TRANSPORT otherwise); RTS/CTS messages
+ *        work here without the session calls.
+ *     *bytesUsed = bytes written, *nFrames = frames written; CANTP_ERR_BUFFER
+ *     when xnet is too small (*bytesUsed / *nFrames = sizes needed).
+ *   mode CANTP_MODE_READ: xnet in -> values out, stateless like CanTp_Unpack.
+ *     xnetMode is ignored: a J1939 Data frame whose id matches is decoded
+ *     whole; CAN Data / CAN 2.0 / CAN FD frames go through the record
+ *     decoder (TP.CM + TP.DT reassembly); remote, error, delay and trigger
+ *     frames and echo? are ignored. Returns CANTP_FOUND / CANTP_OK / error;
+ *     *bytesUsed = bytes consumed, *nFrames = frames consumed.
+ *
+ * CanTp_RecordsToXnet / CanTp_XnetToRecords convert a record array to the
+ * cluster array and back (type byte verbatim; a frame over 64 bytes has no
+ * record form -> CANTP_ERR_RECORD). Both return the frame count, or
+ * CANTP_ERR_BUFFER with *bytesWritten = bytes needed. CanTp_XnetFrameCount
+ * validates an array and returns its count. CanTp_TimeToLabView /
+ * CanTp_TimeFromLabView convert between the record's 100 ns since 1601 and
+ * the LabVIEW timestamp (exact to 100 ns; 0 <-> 0/0).
+ */
+#define CANTP_XNET_FRAMES 0
+#define CANTP_XNET_J1939  1
+#define CANTP_XNET_TYPE_CAN_DATA   0
+#define CANTP_XNET_TYPE_CAN20_DATA 8
+#define CANTP_XNET_TYPE_CANFD_DATA 16
+#define CANTP_XNET_TYPE_CANFDBRS   24
+#define CANTP_XNET_TYPE_J1939_DATA 192
+#define CANTP_XNET_FRAME_HEAD      27   /* bytes per frame without payload; array = 4 + sum(27 + len) */
+CANTP_API int32_t CanTp_TransferXnet(int32_t slot, int32_t mode, double* values, int32_t nValues,
+                                     uint8_t* xnet, int32_t xnetLen, int32_t xnetMode,
+                                     uint64_t timestamp100ns, uint64_t spacing100ns,
+                                     int32_t* bytesUsed, int32_t* nFrames);
+CANTP_API int32_t CanTp_TransferXnetSgl(int32_t slot, int32_t mode, float* values, int32_t nValues,
+                                        uint8_t* xnet, int32_t xnetLen, int32_t xnetMode,
+                                        uint64_t timestamp100ns, uint64_t spacing100ns,
+                                        int32_t* bytesUsed, int32_t* nFrames);
+CANTP_API int32_t CanTp_RecordsToXnet(const uint8_t* frames, int32_t framesLen,
+                                      uint8_t* xnet, int32_t xnetLen, int32_t* bytesWritten);
+CANTP_API int32_t CanTp_XnetToRecords(const uint8_t* xnet, int32_t xnetLen,
+                                      uint8_t* frames, int32_t framesLen, int32_t* bytesWritten);
+CANTP_API int32_t CanTp_XnetFrameCount(const uint8_t* xnet, int32_t xnetLen);
+CANTP_API int32_t CanTp_TimeToLabView(uint64_t timestamp100ns, int64_t* seconds, uint64_t* fraction);
+CANTP_API uint64_t CanTp_TimeFromLabView(int64_t seconds, uint64_t fraction);
 
 #ifdef __cplusplus
 }

@@ -2,6 +2,43 @@
 
 ---
 
+## v1.3.0 - 2026-09-14
+
+Release 4, from Scott's follow-up on the CAN parsing thread (2026-09-13/14):
+the flattened NI-XNET **XNET Frame CAN** cluster array as a second frame
+format, so LabVIEW unflattens the DLL output straight into XNET Write and
+flattens XNET Read straight into the DLL. Additive — records, tables and
+every earlier export are unchanged.
+
+- **`CanTp_TransferXnet` / `CanTp_TransferXnetSgl`**: `CanTp_Transfer` on
+  the flattened array of `XNET Frame CAN` clusters (I32 count; per frame
+  I64/U64 LabVIEW timestamp, I32 length + payload, U32 identifier, U8 type,
+  extended?, echo?; the cluster's type order, verified against two arrays
+  flattened in LabVIEW). No length array: each payload carries its length.
+  Write `xnetMode` 0 = the CAN Data / CAN FD frames of the sequence (TP.CM
+  then TP.DT), `xnetMode` 1 = one J1939 Data frame (type 192) with the whole
+  payload for an NI-XNET J1939 session (RTS/CTS messages need no session
+  there). Read decodes J1939 Data frames whole, CAN frames through the
+  record decoder, skips remote / error / delay / trigger frames and echo.
+- **`CanTp_RecordsToXnet` / `CanTp_XnetToRecords`**: convert between the
+  raw record array and the cluster array (type byte verbatim, sizes on
+  −6); **`CanTp_XnetFrameCount`** validates an array.
+- **`CanTp_TimeToLabView` / `CanTp_TimeFromLabView`**: record 100 ns since
+  1601 ↔ LabVIEW seconds + 2⁻⁶⁴ fraction since 1904, exact.
+- The record decoder now accepts type 8 (CAN 2.0 Data on a CAN FD network)
+  like CAN Data.
+- `tools/xnetflat.py`: the format in Python (flatten / unflatten / records),
+  CLI lists a flattened file; used by the oracle as the reference.
+- Tests: 545 checks (105 new: timestamps incl. Scott's samples byte-exact,
+  converters, TransferXnet both modes, buffer/argument errors, mixed
+  frames, the 1785-byte BAM); oracle section (i): Scott's two LabVIEW
+  samples, 3000 random instants vs a Python big-int reference, EEC1 / EC1 /
+  RC / ET1 / TCFG through both modes vs cantools. Pi 5: 545/545 aarch64 and
+  static armhf (`docs/testlogs/pi-2026-09-14.txt`).
+- Docs: `RECORD-FORMAT.md` §6 (the array byte by byte, Scott's sample
+  annotated), package guide section and CLFN table, LabVIEW guide 4.3c with
+  the Unflatten wiring, troubleshooting rows.
+
 ## v1.2.0 - 2026-09-12
 
 Release 3, from Scott's "CanParsing" notes: the ECD message cluster as the

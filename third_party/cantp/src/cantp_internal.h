@@ -6,6 +6,7 @@
 #include "cantp.h"
 
 #define XNET_TYPE_CAN_DATA    0x00
+#define XNET_TYPE_CAN20_DATA  0x08   /* "CAN 2.0 Data" on a CAN FD network: decoded like CAN Data */
 #define XNET_TYPE_CANFD_DATA  0x10
 #define XNET_TYPE_CANFDBRS    0x18
 

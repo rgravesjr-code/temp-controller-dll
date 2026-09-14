@@ -42,7 +42,7 @@ static void test_records(void)
     CHECK(CanTp_RecordSize(rec, 80) == 32 && CanTp_RecordSize(rec, 31) == CANTP_ERR_RECORD && CanTp_RecordSize(rec, 10) == CANTP_ERR_RECORD);
     CHECK(CanTp_NclHeader(hdr, 12) == CANTP_OK && hdr[0] == 0x4E && hdr[1] == 0x49 && hdr[8] == 1);
     CHECK(CanTp_NclHeader(hdr, 11) == CANTP_ERR_ARG);
-    CHECK(CanTp_Version() == 0x010200);
+    CHECK(CanTp_Version() == 0x010300);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -323,6 +323,7 @@ static void test_ec1_like(void)
 
 #include "test_release2.inc"
 #include "test_release3.inc"
+#include "test_release4.inc"
 
 int main(void)
 {
@@ -338,6 +339,9 @@ int main(void)
     test_define_flat_real();
     test_define_flat_synthetic();
     test_transfer();
+    test_labview_time();
+    test_xnet_convert();
+    test_transfer_xnet();
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

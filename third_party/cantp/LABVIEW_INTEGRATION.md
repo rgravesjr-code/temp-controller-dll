@@ -142,6 +142,39 @@ the records from XNET Read (Frame Raw) as `frames`, either an empty
 message, `bytesUsed` / `nFrames` say how far the walk went. The same VI with
 the mode wired to a boolean serves both ends.
 
+### 4.3c CanTp_TransferXnet (v1.3.0: the XNET Frame CAN cluster, no byte handling)
+
+| # | Name | Type | Data type | Pass |
+|---|---|---|---|---|
+| 1 | slot | Numeric | Signed 32-bit | Value |
+| 2 | mode | Numeric | Signed 32-bit: 0 write, 1 read | Value |
+| 3 | values | Array | 8-byte Double, 1-D, nSig elements (`CanTp_TransferXnetSgl`: 4-byte Single) | Array Data Pointer |
+| 4 | nValues | Numeric | Signed 32-bit | Value |
+| 5 | xnet | Array | Unsigned 8-bit, 1-D; for writing pre-size to `4 + CanTp_FrameCount × 35` (or `4 + 27 + CanTp_PayloadLength` in J1939 Data mode) | Array Data Pointer |
+| 6 | xnetLen | Numeric | Signed 32-bit | Value |
+| 7 | xnetMode | Numeric | Signed 32-bit: 0 = CAN frames (TP.CM + TP.DT), 1 = one J1939 Data frame | Value |
+| 8 | timestamp100ns | Numeric | Unsigned 64-bit (0 = not set) | Value |
+| 9 | spacing100ns | Numeric | Unsigned 64-bit | Value |
+| 10 | bytesUsed | Numeric | Signed 32-bit | Pointer to Value |
+| 11 | nFrames | Numeric | Signed 32-bit | Pointer to Value |
+
+Write: `Array Subset(xnet, 0, bytesUsed)` → `Byte Array To String` →
+`Unflatten From String` with the type input wired to an empty **array of
+XNET Frame CAN** (the `XNET Frame CAN.ctl` typedef from `vi.lib\xnet`),
+default byte order (big-endian) and "data includes array or string size"
+= TRUE → `XNET Write (Frame CAN)`. `nFrames` is the array length. Read:
+`XNET Read (Frame CAN)` → `Flatten To String` (defaults) → `String To Byte
+Array` → `xnet`; 1 back means `values` holds the message. No frame-length
+array and no `Reshape` are needed: each frame's payload carries its length.
+
+`xnetMode` 0 gives the transport-protocol frames (TP.CM first, then the
+TP.DT packets) for a raw CAN frame session, the same frames `CanTp_Pack`
+produces. `xnetMode` 1 gives one frame of type J1939 Data with the whole
+payload under the message id; use it only with a session whose database
+has the J1939 application protocol set, where XNET does the transport
+protocol itself. The frames are written with echo? = FALSE; set it in
+LabVIEW if you want them echoed.
+
 ### 4.4 CanTp_RxFeed (every received frame)
 
 | # | Name | Type | Data type | Pass |
@@ -235,7 +268,11 @@ muxDefs DBL 1-D Array Data Pointer (nSig × 2), nSig I32.
 Raw-record timestamps count 100 ns since 1601-01-01 UTC. From a LabVIEW
 absolute timestamp (seconds since 1904-01-01):
 `timestamp100ns = (ts + 9561628800) × 1e7`. Pass 0 unless you log to `.ncl`
-or use replay timing.
+or use replay timing. `CanTp_TimeToLabView(ts, &seconds, &fraction)` and
+`CanTp_TimeFromLabView(seconds, fraction)` do the exact conversion both ways
+(the LabVIEW timestamp is I64 seconds + U64 fraction in units of 2⁻⁶⁴, the
+two halves of the flattened 16 bytes); the XNET Frame CAN path (4.3c)
+applies it to every frame automatically.
 
 ## 7. Troubleshooting
 
@@ -249,6 +286,9 @@ or use replay timing.
 | −14 from DefineFlat | Not a flattened `J1939Msg(V4)` cluster: check Flatten To String is big-endian with size prefixes, and that the whole string reached the DLL |
 | −5 from DefineFlat | Usually a Motorola channel: the library reads the start bit as the DBC sawtooth MSB position; an ECD entry using another convention does not fit (DBC-CONVENTIONS.md §8) |
 | −6 from Pack | `out` too small: size it from `CanTp_OutputSize` |
+| −8 from TransferXnet (read) | Not a flattened array of XNET Frame CAN: Flatten To String must be big-endian with the size prefixes, and the type must be the **array**, not one cluster (a lone cluster reads as an empty array or as garbage) |
+| −7 from TransferXnet (write) | `xnetMode` 1 on a classic / CAN FD / ISO-TP slot, or `xnetMode` 0 on a multi-frame RTS/CTS slot (use the session calls, or mode 1 with a J1939 session) |
+| Unflatten From String errors on the DLL output | The type wired to Unflatten is not the array of `XNET Frame CAN.ctl`, or "data includes size" is FALSE |
 | RxFeed never returns 1 | SA mismatch (an override was given but the sender uses another SA), a missing TP.DT packet (the sequence is abandoned until the next TP.CM), or frames fed as something other than one whole record |
 | Values decode as the maximum | Sender packed NaN ("not available", all ones) |
 | Receiver on the bus shows no PG | BAM packets sent back-to-back or > 200 ms apart; pace them 50..200 ms |

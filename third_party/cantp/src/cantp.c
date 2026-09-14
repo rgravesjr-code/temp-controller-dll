@@ -349,7 +349,7 @@ static int32_t feed_record(CanTpMsg* m, const uint8_t* rec, int recLen, uint32_t
     int size = CanTp_RecordSize(rec, recLen);
     if (size < 0) return CANTP_ERR_RECORD;
     int type = rec[12];
-    if (type != XNET_TYPE_CAN_DATA && type != XNET_TYPE_CANFD_DATA && type != XNET_TYPE_CANFDBRS) return CANTP_OK;
+    if (type != XNET_TYPE_CAN_DATA && type != XNET_TYPE_CAN20_DATA && type != XNET_TYPE_CANFD_DATA && type != XNET_TYPE_CANFDBRS) return CANTP_OK;
 
     int singleFrame = m->transport == CANTP_TP_CLASSIC || m->transport == CANTP_TP_CANFD || m->transport == CANTP_TP_CANFD_BRS
                    || ((m->transport == CANTP_TP_J1939_BAM || m->transport == CANTP_TP_J1939_RTS) && m->len <= 8);

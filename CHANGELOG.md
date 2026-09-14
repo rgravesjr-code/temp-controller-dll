@@ -2,6 +2,17 @@
 
 ---
 
+## v2.0.2 - 2026-09-14
+
+Maintenance release: no controller change. Re-vendors **CanTp v1.3.0**
+(`third_party\cantp\`), which adds `CanTp_TransferXnet`: the frames as the
+flattened LabVIEW `XNET Frame CAN` cluster array (TP.CM + TP.DT as CAN Data
+frames, or one J1939 Data frame for an XNET J1939 session), converters to
+and from the raw records, and exact LabVIEW timestamp conversion, after
+Scott's follow-up on the CAN parsing thread. The simulator still uses
+`CanTp_PackSgl` / `CanTp_Unpack` and is rebuilt against the new binaries.
+`TcVersion()` reports 2.0.2.
+
 ## v2.0.1 - 2026-09-12
 
 Maintenance release: no controller change. Re-vendors **CanTp v1.2.0**

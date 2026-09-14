@@ -13,6 +13,10 @@ oracle_test.py - cross-check cantp.dll / libcantp.so against independent impleme
         (h) every cluster of an Eaton .ecd database through CanTp_DefineFlat (tables,
             defaults, FlatSize walk), ECD vs DBC wire layout by channel name, and
             CanTp_Transfer with frame lengths vs cantools for the real J1939 messages.
+  * Release 4 (v1.3.0):
+        (i) the flattened XNET Frame CAN cluster array: Scott's LabVIEW samples, timestamp
+            conversion vs Python big ints, real messages through CanTp_TransferXnet in
+            both modes vs cantools and tools/xnetflat.py.
   * Release 2:
         (e) multiplexed VW message (17 rows) vs cantools for 12 multiplexor values,
         (f) ISO-TP sessions in both directions against the `isotp` package (block
@@ -639,6 +643,125 @@ if os.path.exists(ecd_path) and os.path.exists(args.dbc):
     print(f'(h) .ecd clusters: {"ok" if fails == before else f"{fails - before} failures"}')
 else:
     print(f'(h) skipped, .ecd or DBC not found: {ecd_path} / {args.dbc}')
+
+# ------------------------------------------------------------ (i) v1.3.0: the flattened "XNET Frame CAN" cluster array vs tools/xnetflat.py + LabVIEW samples
+before = fails
+import xnetflat
+lib.CanTp_TransferXnet.argtypes = [C.c_int32, C.c_int32, C.POINTER(C.c_double), C.c_int32, C.POINTER(C.c_uint8), C.c_int32,
+                                   C.c_int32, C.c_uint64, C.c_uint64, C.POINTER(C.c_int32), C.POINTER(C.c_int32)]
+lib.CanTp_RecordsToXnet.argtypes = [C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_int32)]
+lib.CanTp_XnetToRecords.argtypes = [C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_int32)]
+lib.CanTp_XnetFrameCount.argtypes = [C.POINTER(C.c_uint8), C.c_int32]
+lib.CanTp_TimeToLabView.argtypes = [C.c_uint64, C.POINTER(C.c_int64), C.POINTER(C.c_uint64)]
+lib.CanTp_TimeFromLabView.argtypes = [C.c_int64, C.c_uint64]
+for f in (lib.CanTp_TransferXnet, lib.CanTp_RecordsToXnet, lib.CanTp_XnetToRecords, lib.CanTp_XnetFrameCount, lib.CanTp_TimeToLabView): f.restype = C.c_int32
+lib.CanTp_TimeFromLabView.restype = C.c_uint64
+
+def u8(b): return (C.c_uint8 * max(1, len(b)))(*b)
+
+def records_to_xnet(buf):
+    n = C.c_int32(); out = (C.c_uint8 * (4 + 64 * 91 + len(buf)))()
+    rc = lib.CanTp_RecordsToXnet(u8(buf), len(buf), out, len(out), C.byref(n))
+    return rc, bytes(out[:n.value])
+
+def xnet_to_records(buf):
+    n = C.c_int32(); out = (C.c_uint8 * (80 * 300))()
+    rc = lib.CanTp_XnetToRecords(u8(buf), len(buf), out, len(out), C.byref(n))
+    return rc, bytes(out[:n.value])
+
+def transfer_xnet_write(slot, values, xmode=0, ts=0):
+    out = (C.c_uint8 * (4 + 256 * 35 + 1785))(); used = C.c_int32(); nf = C.c_int32()
+    v = (C.c_double * max(1, len(values)))(*values)
+    rc = lib.CanTp_TransferXnet(slot, 0, v, len(values), out, len(out), xmode, ts, 0, C.byref(used), C.byref(nf))
+    return rc, bytes(out[:used.value]), nf.value
+
+def transfer_xnet_read(slot, buf, n):
+    vals = (C.c_double * max(1, n))(); used = C.c_int32(); nf = C.c_int32()
+    rc = lib.CanTp_TransferXnet(slot, 1, vals, n, u8(buf), len(buf), 0, 0, 0, C.byref(used), C.byref(nf))
+    return rc, list(vals)[:n], used.value, nf.value
+
+def c_time_to_lv(ts):
+    s = C.c_int64(); f = C.c_uint64(); lib.CanTp_TimeToLabView(ts, C.byref(s), C.byref(f)); return s.value, f.value
+
+# (i1) Scott's LabVIEW samples (2026-09-14): library <-> python <-> file bytes
+fx = os.path.join(HERE, 'fixtures')
+two = open(os.path.join(fx, 'xnet_two_frames_scott_2026-09-14.bin'), 'rb').read()
+one = open(os.path.join(fx, 'xnet_frame_scott_2026-09-14.bin'), 'rb').read()
+frames = xnetflat.unflatten(two)
+check(lib.CanTp_XnetFrameCount(u8(two), len(two)) == 2, '(i1) frame count')
+check([f['id'] for f in frames] == [0x18FEF100, 0x18FEF101] and frames[1]['payload'] == bytes(range(0x10, 0x90, 0x10)), '(i1) python unflatten')
+check(xnetflat.labview_datetime(frames[0]['seconds'], frames[0]['fraction']).strftime('%Y-%m-%d %H:%M:%S') == '2026-09-14 13:22:42', '(i1) timestamp date')
+rc, recs = xnet_to_records(two)
+check(rc == 2 and recs == xnetflat.frames_to_records(frames), '(i1) XnetToRecords == python')
+rc, back = records_to_xnet(recs)
+check(rc == 2 and back == two, '(i1) RecordsToXnet(XnetToRecords(sample)) == the LabVIEW bytes')
+rc, recs1 = xnet_to_records(struct.pack('>i', 1) + one)
+check(rc == 1 and recs1 == xnetflat.frames_to_records(xnetflat.unflatten(struct.pack('>i', 1) + one)), '(i1) one-frame sample')
+check(lib.CanTp_TimeFromLabView(frames[0]['seconds'], frames[0]['fraction']) == frames[0]['ts100ns'] == 134338657624668993, '(i1) TimeFromLabView')
+check(c_time_to_lv(frames[0]['ts100ns']) == (frames[0]['seconds'], frames[0]['fraction']), '(i1) TimeToLabView byte-exact with LabVIEW')
+
+# (i2) timestamp conversion: 3000 random instants both ways, python big-int reference
+for i in range(3000):
+    ts = rng.randrange(0, 1 << 60) if i % 3 else rng.randrange(116444736000000000, 116444736000000000 + 10 ** 16)
+    check(c_time_to_lv(ts) == xnetflat.time_to_labview(ts), f'(i2) TimeToLabView {ts}')
+    s, f = xnetflat.time_to_labview(ts)
+    check(lib.CanTp_TimeFromLabView(s, f) == ts, f'(i2) round trip {ts}')
+    s2, f2 = rng.randrange(0, 1 << 33), rng.randrange(0, 1 << 64)
+    check(lib.CanTp_TimeFromLabView(s2, f2) == xnetflat.time_from_labview(s2, f2), f'(i2) TimeFromLabView {s2} {f2}')
+print('(i2) timestamps: 3000 random instants, C == python big-int reference, round trips exact')
+
+# (i3) real DBC messages: TransferXnet write == python flatten of CanTp_Pack; read back; J1939 Data mode vs cantools
+if os.path.exists(args.dbc):
+    db = cantools.database.load_file(args.dbc, strict=False)
+    for name in ['EEC1', 'EC1', 'RC', 'ET1', 'TCFG']:
+        try: m = db.get_message_by_name(name)
+        except KeyError: continue
+        t = dbc2tables.convert(m, 0x00)
+        if define(6, t['msgdef'], t['sigdefs']) != 0: continue
+        names = t['signals']
+        for trial in range(10):
+            vals = {}
+            for s in m.signals:
+                if s.name not in names: continue
+                lo = float(s.minimum) if s.minimum is not None else 0
+                hi = float(s.maximum) if s.maximum is not None else (2 ** s.length - 1) * float(s.scale) + float(s.offset)
+                raw = rng.randrange(0, 2 ** s.length - 1) if trial else 0
+                phys = raw * float(s.scale) + float(s.offset)
+                vals[s.name] = min(max(phys, lo), hi) if hi > lo else phys
+            expect = m.encode(vals, strict=False, padding=True)
+            values = [vals[n] for n in names]
+            ts = rng.randrange(116444736000000000, 116444736000000000 + 10 ** 16)
+            rc, packed = pack(6, values)
+            rc2, xbuf, nf = transfer_xnet_write(6, values, 0, ts)
+            check(rc == 0 and rc2 == 0, f'(i3) {name} write rc {rc} {rc2}')
+            if rc or rc2: break
+            fr = xnetflat.unflatten(xbuf)
+            check(nf == len(fr) == len(records(packed)), f'(i3) {name} frame count {nf}')
+            check(all(f['type'] == 0 and f['ext'] and not f['echo'] for f in fr), f'(i3) {name} type/ext/echo')
+            check(fr[0]['ts100ns'] == ts, f'(i3) {name} timestamp')
+            # the frames are Pack's records (timestamps aside: Pack got 0)
+            check([(f['id'], f['payload']) for f in fr] == [(r[0], r[2]) for r in records(packed)], f'(i3) {name} frames == Pack records')
+            check(xnetflat.flatten(xnetflat.records_to_frames(packed)) == xnetflat.flatten([dict(f, ts100ns=0) for f in fr]), f'(i3) {name} python flatten == library')
+            payload = reassemble(xnetflat.frames_to_records(fr), m.length)
+            check(payload is not None and payload[:m.length] == expect[:m.length], f'(i3) {name} payload vs cantools')
+            rc, got, used, nfr = transfer_xnet_read(6, xbuf, len(names))
+            check(rc == 1 and used == len(xbuf) and nfr == nf, f'(i3) {name} read rc {rc} used {used}/{len(xbuf)} nf {nfr}')
+            dec = m.decode(expect, decode_choices=False, scaling=True)
+            for n, g in zip(names, got):
+                d = float(dec[n])
+                check(abs(g - d) < 1e-6 * max(1, abs(d)), f'(i3) {name}.{n}: {g} vs {d}')
+            if t['msgdef'][3] == 1:        # J1939: one J1939 Data frame with the whole payload
+                rc, jbuf, nf = transfer_xnet_write(6, values, 1)
+                jf = xnetflat.unflatten(jbuf)
+                check(rc == 0 and nf == 1 and len(jf) == 1 and jf[0]['type'] == 192 and jf[0]['ext'], f'(i3) {name} J1939 Data frame')
+                eff_id = (int(t['msgdef'][0]) & ~0xFF) | (int(t['msgdef'][4]) if t['msgdef'][4] >= 0 else int(t['msgdef'][0]) & 0xFF)   # SA applied
+                check(jf[0]['payload'] == expect[:m.length] and jf[0]['id'] == eff_id, f'(i3) {name} J1939 Data payload/id {jf[0]["id"]:#x}')
+                rc, got, used, nfr = transfer_xnet_read(6, jbuf, len(names))
+                check(rc == 1 and nfr == 1 and all(abs(g - float(dec[n])) < 1e-6 * max(1, abs(float(dec[n]))) for n, g in zip(names, got)), f'(i3) {name} J1939 Data read')
+        print(f'(i3) {name}: {m.length} bytes, {len(names)} signals, 10 value sets through TransferXnet (frames + J1939 Data modes)')
+    print(f'(i) XNET frame array: {"ok" if fails == before else f"{fails - before} failures"}')
+else:
+    print(f'(i) DBC part skipped, DBC not found: {args.dbc}')
 
 print(f'library version {lib.CanTp_Version():#08x}')
 print('ALL OK' if fails == 0 else f'{fails} FAILURES')

@@ -10,13 +10,15 @@ src/cantp.h           public API + semantics (read this first)
 src/cantp.c           slots, define, pack, unpack, live receive, session entry points
 src/flat.c            CanTp_DefineFlat: the flattened LabVIEW J1939Msg(V4) cluster (ECD) as input; GetDef, Defaults
 src/transfer.c        CanTp_FrameLengths, CanTp_Transfer (one call, read/write mode, frame-length array)
+src/xnetflat.c        CanTp_TransferXnet + converters: the flattened XNET Frame CAN cluster array, LabVIEW timestamps
 src/session.c         RTS/CTS + ISO-TP sessions (sender and receiver), multi-frame reassembly
 src/bits.c            DBC bit placement/extraction, raw<->physical
 src/xnet.c            NI-XNET raw record read/write, .ncl header
-tests/test_main.c     440 unit checks (compiled with the sources; test_release2.inc = sessions + mux, test_release3.inc = flat + Transfer)
+tests/test_main.c     545 unit checks (compiled with the sources; test_release2.inc = sessions + mux, test_release3.inc = flat + Transfer, test_release4.inc = XNET frame array)
 tests/oracle_test.py  cantools + pretty_j1939 + isotp cross-check incl. real Vector J1939 messages and every .ecd cluster
 tools/dbc2tables.py   .dbc -> CanTp tables (JSON / CSV for LabVIEW / C header)
 tools/ecdflat.py      .ecd -> per-message flattened cluster bytes (DefineFlat input), cluster <-> Python
+tools/xnetflat.py     the flattened XNET Frame CAN cluster array in Python (oracle reference, non-LabVIEW callers)
 tools/pi_bus_loop.py  live SocketCAN BAM loop test for the .so
 tools/pi_session_loop.py  live two-node RTS/CTS / ISO-TP session test
 tools/elfinfo.py      ELF inspector (DEPENDENCIES.txt)
@@ -38,7 +40,7 @@ build.bat            :: all: dll x64+x86, run gates, .so linux-x64 + linux-arm64
 build.bat test       :: dll + gates only
 build.bat linux      :: .so only
 python tests\oracle_test.py            (pip install cantools pretty_j1939 can-isotp)
-package_dist.bat 1.2.0 [zip-password]  -> dist\CanTp_v1.2.0*
+package_dist.bat 1.3.0 [zip-password]  -> dist\CanTp_v1.3.0*
 ```
 
 Outputs: `build\win-x64\cantp.dll`, `build\win-x86\cantp.dll`,
@@ -64,4 +66,6 @@ See `docs/DBC-CONVENTIONS.md` for where those numbers come from and
 slot can be defined without any table: `CanTp_DefineFlat(0, bytes, len, -1, -1)`
 with the Flatten To String output of the `J1939Msg(V4)` cluster, and
 `CanTp_Transfer(0, mode, values, n, frames, size, lens, nFrames, 0, 0, &used, &nf)`
-serves both directions with a per-frame length array.
+serves both directions with a per-frame length array, and
+`CanTp_TransferXnet(0, mode, values, n, xnet, size, 0, 0, 0, &used, &nf)` does the
+same on the flattened `XNET Frame CAN` cluster array (v1.3.0).

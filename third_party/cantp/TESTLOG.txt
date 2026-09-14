@@ -1,10 +1,10 @@
-CanTp v1.2.0 release-gate log, captured by package_dist.bat
+CanTp v1.3.0 release-gate log, captured by package_dist.bat
 
 ============ x64 gate ============
-440 passed, 0 failed
+545 passed, 0 failed
  
 ============ x86 gate ============ 
-440 passed, 0 failed
+545 passed, 0 failed
  
 ============ Python oracle (cantools + pretty_j1939 + isotp + .ecd clusters) against cantp.dll ============ 
 (a) single-signal layouts: 3000 compared, ok
@@ -33,26 +33,34 @@ CanTp v1.2.0 release-gate log, captured by package_dist.bat
 (h2) DM1: 22 bytes, 13 channels (13 matched to the DBC by name), 10 value sets via Transfer
 (h2) HOURS: 8 bytes, 2 channels (2 matched to the DBC by name), 10 value sets via Transfer
 (h) .ecd clusters: ok
-library version 0x010200
+(i2) timestamps: 3000 random instants, C == python big-int reference, round trips exact
+(i3) EEC1: 8 bytes, 8 signals, 10 value sets through TransferXnet (frames + J1939 Data modes)
+(i3) EC1: 40 bytes, 28 signals, 10 value sets through TransferXnet (frames + J1939 Data modes)
+(i3) RC: 19 bytes, 14 signals, 10 value sets through TransferXnet (frames + J1939 Data modes)
+(i3) ET1: 8 bytes, 6 signals, 10 value sets through TransferXnet (frames + J1939 Data modes)
+(i3) TCFG: 50 bytes, 26 signals, 10 value sets through TransferXnet (frames + J1939 Data modes)
+(i) XNET frame array: ok
+library version 0x010300
 ALL OK
  
 ============ example tables from J1939_NGHD_V130.dbc (EC1, EEC1, RC) ============ 
 EC1: id 0x18fee3fe len 40 j1939_bam 28 signals
 EEC1: id 0xcf004fe len 8 classic 8 signals
 RC: id 0x18fee1fe len 19 j1939_bam 14 signals
-3 message(s) written to C:\CodeProjects\can-tp-dll\dist\CanTp_v1.2.0\examples\tables
+3 message(s) written to C:\CodeProjects\can-tp-dll\dist\CanTp_v1.3.0\examples\tables
  
 ============ Linux / Raspberry Pi log, pasted from CANTP_PI_LOG ============ 
-CanTp v1.2.0 - Raspberry Pi 5 run, 2026-09-13T03:05:58Z (release binaries)
+CanTp v1.3.0 - Raspberry Pi 5 run, 2026-09-14T15:34:19Z (release binaries)
 Linux pi-engine 6.18.34+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.18.34-1+rpt1 (2026-06-09) aarch64 GNU/Linux
 
 === linux-arm64/test_cantp (aarch64, glibc target 2.24) ===
-440 passed, 0 failed
+545 passed, 0 failed
 rc=0
 
 === 32-bit ARM: static musl build of the same sources run under the 64-bit kernel (the shipped glibc-linked linux-armhf/test_cantp needs the 32-bit libc of a chroot) ===
-440 passed, 0 failed
+545 passed, 0 failed
 rc=0
 
-=== linux-arm64/libcantp.so loads via ctypes ===
-0x10200
+=== linux-arm64/libcantp.so loads via ctypes: CanTp_Version, XnetFrameCount on Scott's two-frame sample ===
+0x10300
+frames 2

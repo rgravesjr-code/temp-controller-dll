@@ -70,6 +70,11 @@ length, so a caller can walk a mixed array. Byte-level worked examples
 (classic, J1939 PG, BAM, CAN FD) and the bit numbering inside the payload
 are in `RECORD-FORMAT.md`.
 
+Since v1.3.0 the same frames are also available as the flattened LabVIEW
+**XNET Frame CAN** cluster array (`CanTp_TransferXnet`, converters
+`CanTp_RecordsToXnet` / `CanTp_XnetToRecords`), which LabVIEW unflattens
+straight into the XNET Write input; see that section below.
+
 ## Message definition row — `CANTP_MSGDEF_COLS = 8` doubles
 
 | Col | Name | Meaning |
@@ -284,6 +289,80 @@ RTS/CTS and ISO-TP messages still need the session calls in write mode.
 | frameLens | Array U8 1-D, pre-sized to `CanTp_FrameCount` for writing | Array Data Pointer |
 | frameLensLen | I32 (0 to skip) | Value |
 | timestamp100ns, spacing100ns | U64 | Value |
+| bytesUsed | I32 | Pointer to Value |
+| nFrames | I32 | Pointer to Value |
+
+### The flattened XNET Frame CAN cluster array (v1.3.0)
+
+```c
+int32_t CanTp_TransferXnet   (int32_t slot, int32_t mode, double* values, int32_t nValues,
+                              uint8_t* xnet, int32_t xnetLen, int32_t xnetMode,
+                              uint64_t timestamp100ns, uint64_t spacing100ns,
+                              int32_t* bytesUsed, int32_t* nFrames);
+int32_t CanTp_TransferXnetSgl(... float* values ...);
+int32_t CanTp_RecordsToXnet  (const uint8_t* frames, int32_t framesLen, uint8_t* xnet, int32_t xnetLen, int32_t* bytesWritten);
+int32_t CanTp_XnetToRecords  (const uint8_t* xnet, int32_t xnetLen, uint8_t* frames, int32_t framesLen, int32_t* bytesWritten);
+int32_t CanTp_XnetFrameCount (const uint8_t* xnet, int32_t xnetLen);
+int32_t CanTp_TimeToLabView  (uint64_t timestamp100ns, int64_t* seconds, uint64_t* fraction);
+uint64_t CanTp_TimeFromLabView(int64_t seconds, uint64_t fraction);
+```
+
+A second frame format next to the raw records: the bytes LabVIEW's
+**Flatten To String** produces for a 1-D array of the NI-XNET **XNET Frame
+CAN** cluster (big-endian, sizes prepended: the defaults). LabVIEW then goes
+`XNET Read (Frame CAN)` → `Flatten To String` → `CanTp_TransferXnet` on
+receive, and `CanTp_TransferXnet` → `Unflatten From String` (type: array of
+XNET Frame CAN) → `XNET Write (Frame CAN)` on transmit, with no byte
+handling and no length array: every payload carries its own length.
+
+| Bytes | Field |
+|---|---|
+| 4 | I32 frame count |
+| per frame: 8 | I64 timestamp seconds since 1904-01-01 UTC (0 = not set) |
+| 8 | U64 timestamp fraction of a second, units of 2⁻⁶⁴ |
+| 4 + n | I32 payload length n, then the payload |
+| 4 | U32 identifier, bare 11- or 29-bit (no flag bits) |
+| 1 | type: 0 CAN Data, 1 CAN Remote, 2 CAN Bus Error, 8 CAN 2.0 Data, 16 CAN FD Data, 24 CAN FD+BRS Data, 192 J1939 Data, 224 Delay, 225 Log Trigger, 226 Start Trigger |
+| 1 | extended? (0/1) |
+| 1 | echo? (0/1) |
+
+The element order is the cluster's type order, which is not the panel order
+(`RECORD-FORMAT.md` §6 shows two frames flattened by LabVIEW byte by byte).
+The type values are NI-XNET's own and equal the record's type byte.
+
+`CanTp_TransferXnet` is `CanTp_Transfer` on this format:
+
+| mode | xnetMode | values | xnet | `*bytesUsed` | `*nFrames` | returns |
+|---|---|---|---|---|---|---|
+| 0 write | 0 `CANTP_XNET_FRAMES` | in | out: the frames of one sequence as CAN Data / CAN FD frames, TP.CM first then TP.DT (the same frames as `CanTp_Pack`), echo? = 0 | bytes written | frames written | 0, or −6 with the sizes needed |
+| 0 write | 1 `CANTP_XNET_J1939` | in | out: **one J1939 Data frame** (type 192) with the whole payload under the message id (SA / DA applied), for an NI-XNET session whose database uses the J1939 application protocol: XNET then runs the transport protocol itself. J1939 transports only (−7 otherwise); RTS/CTS messages need no session calls here | bytes written | 1 | 0, −6, −7 |
+| 1 read | ignored | out | in: any frames, TP.CM first for a sequence | bytes consumed | frames consumed | 1 message decoded, 0 nothing complete, −8 malformed array |
+
+Read mode is stateless like `CanTp_Unpack`: a J1939 Data frame whose id
+matches is decoded whole; CAN Data, CAN 2.0 and CAN FD frames go through the
+record decoder (TP.CM + TP.DT reassembly); remote, error, delay and trigger
+frames and the echo? flag are ignored. A timestamp of 0 is written as the
+LabVIEW zero (1904-01-01); a non-zero `timestamp100ns` is converted exactly.
+
+`CanTp_RecordsToXnet` / `CanTp_XnetToRecords` convert between the record
+array and the cluster array (type byte verbatim; a frame over 64 bytes has
+no record form → −8). Both return the frame count, or −6 with
+`*bytesWritten` = bytes needed (pass a NULL output to size).
+`CanTp_XnetFrameCount` validates an array and returns its count.
+`CanTp_TimeToLabView` / `CanTp_TimeFromLabView` convert between the record's
+100 ns since 1601 and the LabVIEW timestamp, exact to 100 ns; 0 ↔ 0/0.
+`tools/xnetflat.py` is the same format in Python for non-LabVIEW callers.
+
+| CLFN param (TransferXnet) | Type | Pass |
+|---|---|---|
+| slot | I32 | Value |
+| mode | I32 (0 write, 1 read) | Value |
+| values | Array DBL 1-D (SGL for TransferXnetSgl), nSig elements | Array Data Pointer |
+| nValues | I32 | Value |
+| xnet | Array U8 1-D; for writing pre-size to `4 + CanTp_FrameCount × 35` (classic / J1939) or `4 + 27 + CanTp_PayloadLength` (J1939 Data mode) | Array Data Pointer |
+| xnetLen | I32 | Value |
+| xnetMode | I32 (0 frames, 1 J1939 Data) | Value |
+| timestamp100ns, spacing100ns | U64 (0 = not set) | Value |
 | bytesUsed | I32 | Pointer to Value |
 | nFrames | I32 | Pointer to Value |
 
