@@ -1,5 +1,5 @@
 # Checks that the requested package version matches tempctl.h and is
-# mentioned in CHANGELOG.md and DISTRIBUTION_README.md. Called by package_dist.bat.
+# mentioned in CHANGELOG.md and docs\package\DISTRIBUTION_README.md. Called by package_dist.bat.
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -17,10 +17,10 @@ foreach ($pair in @(@('MAJOR', $maj), @('MINOR', $min), @('PATCH', $pat))) {
     if ([int]$Matches[1] -ne $want) { $fail.Add("tempctl.h TC_VERSION_$name is $($Matches[1]), package says $want") }
 }
 $esc = [regex]::Escape($Version)
-foreach ($doc in @('CHANGELOG.md', 'DISTRIBUTION_README.md')) {
+foreach ($doc in @('CHANGELOG.md', 'docs\package\DISTRIBUTION_README.md')) {
     $t = Get-Content -LiteralPath (Join-Path $Root $doc) -Raw
     if ($t -notmatch "v$esc") { $fail.Add("$doc does not mention v$Version") }
 }
 if ($fail.Count) { foreach ($f in $fail) { Write-Host "ERROR: $f" }; exit 1 }
-Write-Host "Version $Version consistent across tempctl.h, CHANGELOG.md, DISTRIBUTION_README.md."
+Write-Host "Version $Version consistent across tempctl.h, CHANGELOG.md, docs\package\DISTRIBUTION_README.md."
 exit 0

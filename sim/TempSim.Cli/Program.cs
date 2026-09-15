@@ -18,6 +18,9 @@ namespace TempSim.Cli;
 /// </summary>
 static class Program
 {
+    /// <summary>TempSim's own version (sim\Directory.Build.props), independent of tempctl / cantp.</summary>
+    static readonly string AppVersion = typeof(Program).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "?";
+
     static int Main(string[] args)
     {
         string? scenario = "all", outDir = "out", configFile = null, canIface = null, nativeDir = null, table = null, rxIface = null;
@@ -48,7 +51,7 @@ static class Program
         if (help) { PrintHelp(); return 0; }
         if (nativeDir != null) NativeLoader.NativeDir = nativeDir;
         NativeLoader.Register();
-        Console.WriteLine($"TempSim.Cli 2.0.0  ({NativeLoader.Describe()})");
+        Console.WriteLine($"TempSim.Cli {AppVersion}  ({NativeLoader.Describe()})");
 
         var baseConfig = configFile != null ? SimConfig.Load(configFile) : new SimConfig();
         if (seconds != null) baseConfig.Seconds = seconds.Value;

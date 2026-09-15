@@ -1,8 +1,0 @@
-EngTorqueMode	
-ActlEngPrcntTrqueHighResolution	%
-DriversDemandEngPercentTorque	%
-ActualEngPercentTorque	%
-EngSpeed	rpm
-SrcAddrssOfCtrllngDvcFrEngCntrl	
-EngStarterMode	
-EngDemandPercentTorque	%

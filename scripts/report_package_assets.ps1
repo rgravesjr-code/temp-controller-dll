@@ -1,14 +1,25 @@
 # Generates DEPENDENCIES.txt (PE import tables of the DLLs/exes, ELF report of
-# the .so) and MANIFEST.txt (file list with SHA-256) inside a staged
-# distribution folder. Called by package_dist.bat.
+# the .so files) and MANIFEST.txt (file list with SHA-256) inside a staged
+# distribution folder. Called by the package_*.bat scripts. Generic: the
+# product name and the audited files are parameters, so the same script serves
+# every native-DLL package (CanTp, TempCtl, ...). Pass no -PeFiles/-ElfFiles to
+# write only the manifest (pure .NET or document packages). File lists are
+# semicolon-separated strings (comma lists do not survive powershell -File).
 param(
     [Parameter(Mandatory = $true)][string]$PackageDir,
     [Parameter(Mandatory = $true)][string]$Version,
-    [string]$Password = 'scott',
-    [string]$ElfInfoScript = ''
+    [string]$Product = 'package',
+    [string]$PeFiles = '',      # semicolon-separated, relative to PackageDir
+    [string]$ElfFiles = '',     # semicolon-separated, relative to PackageDir
+    [string]$ElfInfoScript = '',
+    [string]$Note = ''
 )
 
 $ErrorActionPreference = 'Stop'
+# New variables on purpose: assigning an array back to a [string]-typed parameter
+# would coerce it to one space-joined string.
+[string[]]$peList  = @($PeFiles  -split ';' | Where-Object { $_ })
+[string[]]$elfList = @($ElfFiles -split ';' | Where-Object { $_ })
 
 function Get-PeImports {
     param([string]$Path)
@@ -59,53 +70,54 @@ function Get-PeImports {
     }
 }
 
-$lines = @("TempCtl v$Version dependency report (generated at package time)", '', 'The simulator folders are self-contained .NET 10 publishes (bundled runtime); only the native libraries are audited here.', '')
 $bad = $false
-foreach ($rel in @('tempctl.dll', 'x86\tempctl.dll', 'test_tempctl.exe', 'x86\test_tempctl.exe')) {
-    $p = Join-Path $PackageDir $rel
-    if (-not (Test-Path -LiteralPath $p)) { continue }
-    $info = Get-PeImports $p
-    $lines += "$rel  [$($info.Machine)]"
-    foreach ($imp in $info.Imports) { $lines += "  imports $imp" }
-    $vcDeps = $info.Imports | Where-Object { $_ -match '(?i)vcruntime|msvcp|api-ms-win-crt|msvcr' }
-    if ($vcDeps) {
-        $lines += "  *** UNEXPECTED VC RUNTIME DEPENDENCY: $($vcDeps -join ', ') ***"
-        $bad = $true
-    } else {
-        $lines += '  -> operating-system DLLs only; no VC++ runtime'
-    }
-    $lines += ''
-}
-
-# ELF report for the Linux artefacts (tools\elfinfo.py, needs python on PATH)
-foreach ($rel in @('linux-x64\libtempctl.so', 'linux-x64\test_tempctl', 'linux-arm64\libtempctl.so', 'linux-arm64\test_tempctl')) {
-    $p = Join-Path $PackageDir $rel
-    if (-not (Test-Path -LiteralPath $p)) { continue }
-    $lines += "$rel  [ELF]"
-    $py = Get-Command python -ErrorAction SilentlyContinue
-    if ($ElfInfoScript -and $py -and (Test-Path -LiteralPath $ElfInfoScript)) {
-        $out = & $py.Source $ElfInfoScript $p 2>&1
-        foreach ($l in $out) { $lines += "  $l" }
-        $needed = ($out | Where-Object { $_ -like 'NEEDED*' }) -join ' '
-        if ($needed -match 'libstdc|libgcc_s|libm\.') {
-            $lines += "  *** UNEXPECTED SHARED-LIBRARY DEPENDENCY: $needed ***"
+if ($peList.Count -or $elfList.Count) {
+    $lines = @("$Product v$Version dependency report (generated at package time)", '')
+    if ($Note) { $lines += $Note; $lines += '' }
+    foreach ($rel in $peList) {
+        $p = Join-Path $PackageDir $rel
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        $info = Get-PeImports $p
+        $lines += "$rel  [$($info.Machine)]"
+        foreach ($imp in $info.Imports) { $lines += "  imports $imp" }
+        $vcDeps = $info.Imports | Where-Object { $_ -match '(?i)vcruntime|msvcp|api-ms-win-crt|msvcr' }
+        if ($vcDeps) {
+            $lines += "  *** UNEXPECTED VC RUNTIME DEPENDENCY: $($vcDeps -join ', ') ***"
             $bad = $true
         } else {
-            $lines += '  -> libc only'
+            $lines += '  -> operating-system DLLs only; no VC++ runtime'
         }
-    } else {
-        $lines += '  (python / tools\elfinfo.py not available; ELF report skipped)'
+        $lines += ''
     }
-    $lines += ''
+
+    # ELF report for the Linux artefacts (tools\elfinfo.py, needs python on PATH)
+    foreach ($rel in $elfList) {
+        $p = Join-Path $PackageDir $rel
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        $lines += "$rel  [ELF]"
+        $py = Get-Command python -ErrorAction SilentlyContinue
+        if ($ElfInfoScript -and $py -and (Test-Path -LiteralPath $ElfInfoScript)) {
+            $out = & $py.Source $ElfInfoScript $p 2>&1
+            foreach ($l in $out) { $lines += "  $l" }
+            $needed = ($out | Where-Object { $_ -like 'NEEDED*' }) -join ' '
+            if ($needed -match 'libstdc|libgcc_s|libm\.') {
+                $lines += "  *** UNEXPECTED SHARED-LIBRARY DEPENDENCY: $needed ***"
+                $bad = $true
+            } else {
+                $lines += '  -> libc only'
+            }
+        } else {
+            $lines += '  (python / tools\elfinfo.py not available; ELF report skipped)'
+        }
+        $lines += ''
+    }
+    Set-Content -LiteralPath (Join-Path $PackageDir 'DEPENDENCIES.txt') -Value $lines -Encoding utf8
 }
-Set-Content -LiteralPath (Join-Path $PackageDir 'DEPENDENCIES.txt') -Value $lines -Encoding utf8
 if ($bad) { Write-Host 'ERROR: unexpected runtime dependency found.'; exit 1 }
 
 $manifest = @(
-    "tempctl distribution package v$Version",
-    'Generated by package_dist.bat',
-    '',
-    "Encrypted zip password: $Password",
+    "$Product distribution package v$Version",
+    'Generated at package time',
     '',
     'Files (SHA-256):'
 )
@@ -118,5 +130,5 @@ Get-ChildItem -LiteralPath $PackageDir -Recurse -File |
         $manifest += ('  {0,-40} {1}' -f $rel, $hash)
     }
 Set-Content -LiteralPath (Join-Path $PackageDir 'MANIFEST.txt') -Value $manifest -Encoding utf8
-Write-Host 'DEPENDENCIES.txt and MANIFEST.txt written.'
+if ($peList.Count -or $elfList.Count) { Write-Host 'DEPENDENCIES.txt and MANIFEST.txt written.' } else { Write-Host 'MANIFEST.txt written.' }
 exit 0

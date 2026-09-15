@@ -50,7 +50,7 @@ extern "C" {
 
 #define CANTP_VERSION_MAJOR 1
 #define CANTP_VERSION_MINOR 3
-#define CANTP_VERSION_PATCH 0
+#define CANTP_VERSION_PATCH 1
 /* (major << 16) | (minor << 8) | patch */
 CANTP_API uint32_t CanTp_Version(void);
 

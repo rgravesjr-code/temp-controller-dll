@@ -18,7 +18,8 @@ one zone from one thread at a time.
 **Dependencies:** none. The DLL links the CRT statically (imports only
 `KERNEL32.dll`); the .so imports only `memcpy`/`memset` from libc.
 
-The CAN side is **CanTp** (`third_party\cantp\CANTP_PACKAGE_GUIDE.md`); §5
+The CAN side is **CanTp** (its `CANTP_PACKAGE_GUIDE.md` is in the CanTp
+package; `third_party\cantp\` here holds only the header and binaries); §5
 below shows how the two fit together.
 
 ## 1. Exports

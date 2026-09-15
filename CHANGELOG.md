@@ -2,6 +2,29 @@
 
 ---
 
+## v2.0.3 - 2026-09-15
+
+Packaging release: no controller change (`TcVersion()` reports 2.0.3; the
+181 checks, the DBC and the tables are identical to 2.0.2).
+
+- **The simulator is no longer in this package.** TempSim ships as its own
+  packages (`TempSim_v1.0.0_win-x64`, `_linux-x64`, `_linux-arm64`, see
+  `sim\CHANGELOG.md`) with its own version. The controller package is a few
+  MB again instead of 121 MB.
+- **CanTp is vendored as the subset TempCtl needs**: `cantp.h`, the
+  binaries per target, `tools\dbc2tables.py`, the license and
+  `VENDORED.txt`. CanTp's documentation, source, tests and examples are in
+  the CanTp package. `VENDORED.txt` states the dependency rule: minimum
+  CanTp 1.0.0 (only `Define` / `PackSgl` / `Unpack` / `RxFeed` and queries
+  are used), so a CanTp release does not require a TempCtl release. This
+  release carries CanTp 1.3.1.
+- Repository: shipped documents live in `docs\package\` (copied flat into
+  the package root); the handoff, cover notes and Word files in
+  `docs\notes\`; the simulator's guide, changelog and Pi logs under `sim\`.
+  `MANIFEST.txt` no longer records the zip password.
+- `TEMPCTL-SPEC-v2.0.1.md` (the requirements spec sent for markup on
+  2026-09-14) is included in the package.
+
 ## v2.0.2 - 2026-09-14
 
 Maintenance release: no controller change. Re-vendors **CanTp v1.3.0**

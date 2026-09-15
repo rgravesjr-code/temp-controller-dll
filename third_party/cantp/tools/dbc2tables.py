@@ -13,7 +13,7 @@ one (Scott's rule). Output per message, in the chosen formats:
            the message is multiplexed; <Message>.names.txt lists the signal order.
   * C      <out>/cantp_tables.h  static const double arrays for every message
 
-Rules (see docs/DBC-CONVENTIONS.md):
+Rules (see docs/package/DBC-CONVENTIONS.md):
   - transport: length <= 8 -> classic (0); > 8 with VFrameFormat J1939PG (or a
     29-bit id and no FD attribute) -> J1939 BAM (1); > 8 with VFrameFormat
     StandardCAN_FD / ExtendedCAN_FD -> CAN FD (2, or 3 when CANFD_BRS = 1).

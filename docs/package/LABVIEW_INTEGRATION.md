@@ -3,16 +3,17 @@
 How to wire the controller into a LabVIEW RT application on a cRIO-9045 (or
 any x64 NI Linux RT target) and into a Windows host VI, and how to put its
 state on CAN with CanTp. The API details are in `TEMPCTL_PACKAGE_GUIDE.md`;
-CanTp's own CLFN tables are in `third_party\cantp\CANTP_PACKAGE_GUIDE.md`
-and `LABVIEW_INTEGRATION.md`. This document is the "which file goes where
-and what do I type in the CLFN" companion.
+CanTp's own CLFN tables are in the CanTp package (`CANTP_PACKAGE_GUIDE.md`
+and its `LABVIEW_INTEGRATION.md`); this package carries only CanTp's header
+and binaries under `third_party\cantp\`. This document is the "which file
+goes where and what do I type in the CLFN" companion.
 
 ## 1. Files
 
 | Target | File in this package | Where it goes |
 |---|---|---|
 | cRIO-904x/905x/906x (x64 NI Linux RT) | `linux-x64\libtempctl.so`, `third_party\cantp\linux-x64\libcantp.so` | `/usr/local/lib/` on the target |
-| cRIO self-test | `linux-x64\test_tempctl`, `third_party\cantp\linux-x64\test_cantp` | anywhere on the target, run once each |
+| cRIO self-test | `linux-x64\test_tempctl` (and `linux-x64\test_cantp` from the CanTp package) | anywhere on the target, run once each |
 | Raspberry Pi 4/5 (aarch64) | `linux-arm64\...`, `third_party\cantp\linux-arm64\...` | same |
 | Windows 64-bit LabVIEW | `tempctl.dll`, `third_party\cantp\cantp.dll` | next to the VI/EXE, or a folder on PATH |
 | Windows 32-bit LabVIEW | `x86\tempctl.dll`, `third_party\cantp\x86\cantp.dll` | same |
@@ -29,12 +30,14 @@ enabled on the target in NI MAX → System Settings → Enable Secure Shell):
 
 ```bat
 scp linux-x64\libtempctl.so third_party\cantp\linux-x64\libcantp.so admin@192.168.1.10:/usr/local/lib/
-scp linux-x64\test_tempctl third_party\cantp\linux-x64\test_cantp admin@192.168.1.10:/home/admin/
-ssh admin@192.168.1.10 "chmod 755 /usr/local/lib/lib*.so /home/admin/test_*; /home/admin/test_tempctl; /home/admin/test_cantp"
+scp linux-x64\test_tempctl admin@192.168.1.10:/home/admin/
+ssh admin@192.168.1.10 "chmod 755 /usr/local/lib/lib*.so /home/admin/test_tempctl; /home/admin/test_tempctl"
 ```
 
-Expected last lines: `181 passed, 0 failed` and `177 passed, 0 failed`.
-That proves both binaries load and behave identically on the target.
+Expected last line: `181 passed, 0 failed`. The CanTp package has the
+matching `linux-x64\test_cantp` (`545 passed, 0 failed` for v1.3.x); run it
+the same way to prove both binaries load and behave identically on the
+target.
 
 Alternatives: WebDAV (`\\192.168.1.10\files`) or the LabVIEW project's
 "Files" view can copy the .so too; `chmod 755` is then done over SSH.
@@ -99,7 +102,7 @@ ptr, nSig I32)` once; `CanTp_PackSgl(slot I32, values SGL 1-D ptr, nValues
 I32, timestamp100ns U64, spacing100ns U64, out U8 1-D ptr, outLen I32,
 bytesWritten I32 pointer-to-value)` every tick with the 27-element state
 array as `values`. Pre-size `out` with `CanTp_OutputSize(slot)` (216 bytes
-for the TempCtl message). See `third_party\cantp\LABVIEW_INTEGRATION.md`
+for the TempCtl message). See the CanTp package's `LABVIEW_INTEGRATION.md`
 for the full tables, `CanTp_Unpack` / `CanTp_RxFeed` and the raw-frame
 XNET wiring.
 
@@ -161,8 +164,8 @@ open file, write CanTp_NclHeader() (12 bytes)
 per tick: write the U8 array from CanTp_PackSgl (with real timestamps)
 ```
 
-The result opens in **NI-XNET Bus Monitor** (File → Open Log).
-`examples\out\sensor-failover.ncl` is such a file, produced by the
+The result opens in **NI-XNET Bus Monitor** (File → Open Log). The TempSim
+package's `examples\sensor-failover.ncl` is such a file, produced by the
 simulator, with the matching `.csv` trace.
 
 ## 6. Receiving side

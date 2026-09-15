@@ -1,21 +1,36 @@
 # TempSim — the TempCtl v2 + CanTp simulator
 
-Two programs built on one core (`sim\TempSim.Core`, .NET 10), both driving
-the **real** `tempctl` and `cantp` libraries through P/Invoke — nothing is
+Two programs built on one core (`TempSim.Core`, .NET 10), both driving the
+**real** `tempctl` and `cantp` libraries through P/Invoke — nothing is
 re-implemented in C#. Every tick: plant → sensors → `TcStep` → relays →
 plant, then `CanTp_PackSgl` turns the 27-element output array into the 9
 NI-XNET raw frame records of one J1939 BAM, and `CanTp_Unpack` reads them
 back as the receive-side proof (the "unpack mismatches" counter must stay 0).
 
-| Program | Platforms | Purpose |
-|---|---|---|
-| `simulator\win-x64\TempSim.exe` | Windows x64 | Interactive: graph, lamps, countdowns, live settings, fault injection, frames panel |
-| `simulator\win-x64\TempSim.Cli.exe`, `simulator\linux-x64\TempSim.Cli`, `simulator\linux-arm64\TempSim.Cli` | Windows x64, Linux x86_64, Linux aarch64 | Scripted scenarios → CSV + `.ncl`; Linux: SocketCAN transmit / receive |
+TempSim is released on its own version line (`CHANGELOG.md` here), one
+package per target. The TempCtl controller package and the CanTp package
+are separate downloads; TempSim embeds the `tempctl` and `cantp` binaries it
+was built with and prints their versions at start-up.
 
-Both are self-contained (bundled .NET runtime). The native libraries and
-`TempCtl.json` (the CanTp table generated from `dbc\tempctl.dbc`) sit next
-to the executable; `--native-dir DIR` (CLI) / `TEMPSIM_NATIVE_DIR` points at
-other builds of the libraries.
+## Files in this package
+
+| File | Purpose |
+|---|---|
+| `TempSim\TempSim.exe` (win-x64 package) | Interactive Windows simulator: graph, lamps, countdowns, live settings, fault injection, frames panel |
+| `TempSim\TempSim.Cli.exe` / `TempSim\TempSim.Cli` | Scripted scenarios → CSV + `.ncl`; on Linux also SocketCAN transmit / receive |
+| `TempSim\tempctl.dll` / `libtempctl.so`, `cantp.dll` / `libcantp.so`, `TempCtl.json` | The controller and transport binaries the simulator drives, and the CanTp table of the TempCtl message |
+| `examples\tempsim-screenshot.png` | The Windows simulator after 70 s of the failover scenario (the release gate's screenshot) |
+| `examples\sensor-failover.csv`, `.ncl` | That scenario's trace and NI-XNET log (open the `.ncl` in NI-XNET Bus Monitor) |
+| `TESTLOG.txt` | The gate run (every scenario, the screenshot run) and the Raspberry Pi logs |
+| `testlogs\` | Raw logs from the Raspberry Pi bench: Pi-vs-Windows byte comparison, live SocketCAN loop, Pi scenario runs |
+| `MANIFEST.txt`, `CHANGELOG.md`, `LICENSE.txt` | SHA-256 of every file, release history, MIT |
+| `src\` | The simulator's C# source, `Directory.Build.props` (version), `NativeAssets.targets`, `build_sim.bat` |
+
+Both programs are self-contained (bundled .NET runtime; nothing to
+install). The native libraries and `TempCtl.json` (the CanTp table
+generated from the controller's `tempctl.dbc`) sit next to the executable;
+`--native-dir DIR` (CLI) / `TEMPSIM_NATIVE_DIR` points at other builds of
+the libraries.
 
 ## 1. TempSim.exe (Windows)
 
@@ -88,10 +103,9 @@ The plant, sensors and noise use only `+ − × ÷` in IEEE double and a
 xorshift generator, the controller is IEEE single in C, and the CSV is
 written with fixed rounding and invariant culture. The same scenario
 therefore produces **byte-identical CSV and .ncl files on Windows x64 and on
-the Raspberry Pi** (`docs\testlogs\pi-vs-windows-2026-09-04.txt`). Run
+the Raspberry Pi** (`testlogs\pi-vs-windows-2026-09-04.txt`). Run
 `--scenario all` on a new target and `cmp` the files against
-`examples\out\` or a Windows run to prove the libraries behave the same
-there.
+`examples\` or a Windows run to prove the libraries behave the same there.
 
 ### CSV columns
 
@@ -118,19 +132,24 @@ to the CLI. Scenarios apply their own overrides on top of the file.
 tick are written back-to-back; add `--realtime` to pace ticks). `--rx can0`
 listens, feeds every received frame to `CanTp_RxFeed` and prints each
 completed TempCtl message. This is the bench loop recorded in
-`docs\testlogs\pi-socketcan-loop-2026-09-04.txt`: TempSim on pi-engine's
+`testlogs\pi-socketcan-loop-2026-09-04.txt`: TempSim on pi-engine's
 can1 → TempSim `--rx` on pi-trans's can0, 81 messages in 729 frames, all
 reassembled. Bring the interface up first, e.g.
 `sudo ip link set can0 up type can bitrate 250000`.
 
 ## 3. Rebuilding
 
+In the `temp-controller-dll` repository (the source under `src\` here is
+`sim\` there):
+
 ```bat
 build.bat all                                   :: tempctl binaries (needed by the sim)
 python tools\make_tempctl_dbc.py --tables       :: dbc\tempctl.dbc + dbc\tables (needs cantools)
-build_sim.bat all                               :: publishes build\sim\{win-x64,linux-x64,linux-arm64}
+build_sim.bat all                               :: publishes build\sim\{win-x64,linux-x64,linux-arm64} + headless checks
+package_sim.bat X.Y.Z [password] ["rids"]       :: dist\TempSim_vX.Y.Z_<rid>{,.zip,_unencrypted.zip}
 ```
 
-`sim\NativeAssets.targets` copies the right `tempctl` and vendored `cantp`
-binaries per RuntimeIdentifier. `dotnet run --project sim\TempSim.Cli`
-works for a quick Windows x64 run.
+`sim\NativeAssets.targets` copies the right `tempctl` (from `build\<rid>`)
+and vendored `cantp` (from `third_party\cantp`) binaries per
+RuntimeIdentifier; `sim\Directory.Build.props` holds TempSim's version.
+`dotnet run --project sim\TempSim.Cli` works for a quick Windows x64 run.

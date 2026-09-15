@@ -8,7 +8,6 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>TempSim.Wpf</RootNamespace>
     <AssemblyName>TempSim</AssemblyName>
-    <Version>2.0.2</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>

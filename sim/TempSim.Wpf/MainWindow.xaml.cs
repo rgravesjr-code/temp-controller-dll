@@ -38,7 +38,8 @@ public partial class MainWindow : Window
         NativeLoader.Register();
         try { if (File.Exists(SettingsFile)) _cfg = SimConfig.Load(SettingsFile); } catch { _cfg = new SimConfig(); }
         _table = MessageTable.Load(MessageTable.DefaultPath);
-        VersionText.Text = "TempSim 2.0.0  |  " + NativeLoader.Describe() + $"  |  {_table.Message} PGN {(_table.CanId >> 8) & 0x3FFFF} ({_table.Length} bytes)";
+        var av = typeof(MainWindow).Assembly.GetName().Version;
+        VersionText.Text = $"TempSim {(av != null ? $"{av.Major}.{av.Minor}.{av.Build}" : "?")}  |  " + NativeLoader.Describe() + $"  |  {_table.Message} PGN {(_table.CanId >> 8) & 0x3FFFF} ({_table.Length} bytes)";
         foreach (var s in Scenario.BuiltIn()) ScenarioCombo.Items.Add(new ComboBoxItem { Content = s.Name, Tag = s.Name, ToolTip = s.Description });
         ScenarioCombo.SelectedIndex = 0;
         BuildPanels();

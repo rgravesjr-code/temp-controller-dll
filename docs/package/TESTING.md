@@ -1,13 +1,14 @@
 # Testing Guide — TempCtl v2
 
-Release gate for v2.0.2 (controller unchanged since v2.0.0): `build.bat all` must finish with `181 passed, 0
-failed` for **both** the x64 and the x86 test executables and build both
-Linux targets; `tests\oracle_test.py` must print `ALL OK`; `build_sim.bat
-all` must end with the simulator CLI reporting `unpack mismatches 0` for
-every scenario and the WPF screenshot run exiting 0. `package_dist.bat`
-re-runs the Windows gates, checks that `dbc\tempctl.dbc` matches the
-generator, and records everything in `TESTLOG.txt`; it refuses to package a
-failing build.
+Release gate for v2.0.3 (controller unchanged since v2.0.0): `build.bat all`
+must finish with `181 passed, 0 failed` for **both** the x64 and the x86
+test executables and build both Linux targets; `tests\oracle_test.py` must
+print `ALL OK`. `package_dist.bat` re-runs the Windows gates, checks that
+`dbc\tempctl.dbc` matches the generator, and records everything in
+`TESTLOG.txt`; it refuses to package a failing build. The simulator has its
+own gate (`build_sim.bat` / `package_sim.bat`, recorded in the TempSim
+package's `TESTLOG.txt`): every scenario with `unpack mismatches 0` and the
+WPF screenshot run exiting 0.
 
 ## What the gates cover
 
@@ -70,20 +71,21 @@ the written DBC with cantools (strict), checks the frame id, length,
 `VFrameFormat`, order and that no two signals overlap. `package_dist.bat`
 regenerates the DBC and fails if `dbc\tempctl.dbc` differs.
 
-### Simulator gates (`build_sim.bat`)
+### Simulator gates (TempSim package)
 
 `TempSim.Cli --scenario all`: seven scenarios, 1200 ticks each, every tick
-packed and unpacked; exit 1 on any unpack mismatch. `TempSim.exe
---screenshot`: loads the failover scenario, runs 70 s, renders the window.
+packed by `CanTp_PackSgl` and read back by `CanTp_Unpack`; exit 1 on any
+unpack mismatch. `TempSim.exe --screenshot`: loads the failover scenario,
+runs 70 s, renders the window. Both run against the same `tempctl` binaries
+this package ships; the log is in the TempSim package.
 
 ### On Linux
 
 `linux-arm64\test_tempctl` was run on a Raspberry Pi 5: `181 passed, 0
-failed`. The `linux-arm64\TempSim.Cli` scenarios produced CSV and `.ncl`
-files byte-identical to the Windows run
-(`docs\testlogs\pi-vs-windows-2026-09-04.txt`), and the live SocketCAN loop
-between the two bench Pis reassembled every message
-(`docs\testlogs\pi-socketcan-loop-2026-09-04.txt`).
+failed`. The `linux-arm64` simulator scenarios produced CSV and `.ncl`
+files byte-identical to the Windows run, and the live SocketCAN loop
+between the two bench Pis reassembled every message (both logs ship in the
+TempSim package's `testlogs\`).
 
 `linux-x64\test_tempctl` is the same program for the cRIO; run it once on
 the target (see `LABVIEW_INTEGRATION.md` §2). The `.so` files are inspected
