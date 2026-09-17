@@ -1,0 +1,56 @@
+TempSim 2.0.0 (tempctl 3.0.0 with Amendment A, cantp 1.3.1) on the Raspberry Pi bench (pi-engine, aarch64), 2026-09-18
+build\sim\linux-arm64 copied to /tmp/tempsim3; TempSim.Cli --scenario all --out out --quiet
+
+TempSim.Cli 2.0.0  (tempctl 3.0.0, cantp 1.3.1, linux-arm64)
+    600 ticks, 5400 raw frames, unpack mismatches 0, expectations 5/5 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    600 ticks, 5400 raw frames, unpack mismatches 0, expectations 6/6 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    400 ticks, 3600 raw frames, unpack mismatches 0, expectations 3/3 ok, final status HeaterON (2), warning NoWarning (0)
+    160 ticks, 1440 raw frames, unpack mismatches 0, expectations 13/13 ok, final status CoolerON (3), warning NoWarning (0)
+    400 ticks, 3600 raw frames, unpack mismatches 0, expectations 12/12 ok, final status Temp1FailHigh (10), warning Temp1OutOfRange (1)
+    400 ticks, 3600 raw frames, unpack mismatches 0, expectations 4/4 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    60 ticks, 540 raw frames, unpack mismatches 0, expectations 7/7 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    1200 ticks, 10800 raw frames, unpack mismatches 0, expectations 9/9 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    600 ticks, 5400 raw frames, unpack mismatches 0, expectations 8/8 ok, final status TempDisagreeFault (13), warning TempDisagree (5)
+    120 ticks, 1080 raw frames, unpack mismatches 0, expectations 9/9 ok, final status TempDisagreeFault (13), warning TempDisagree (5)
+    600 ticks, 5400 raw frames, unpack mismatches 0, expectations 8/8 ok, final status HeaterON (2), warning NoWarning (0)
+    300 ticks, 2700 raw frames, unpack mismatches 0, expectations 4/4 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    400 ticks, 3600 raw frames, unpack mismatches 0, expectations 3/3 ok, final status HeatPending (4), warning NoWarning (0)
+    400 ticks, 3600 raw frames, unpack mismatches 0, expectations 7/7 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    600 ticks, 5400 raw frames, unpack mismatches 0, expectations 4/4 ok, final status TempAtSetPt (1), warning Temp1OutOfRange (1)
+    120 ticks, 1080 raw frames, unpack mismatches 0, expectations 8/8 ok, final status HeaterON (2), warning NoWarning (0)
+16 scenario(s): 110/110 expectations ok, ALL OK
+
+Byte comparison of every CSV and .ncl against the Windows x64 run (build\sim\win-x64-out):
+  identical  chatter.csv
+  identical  compare-gating.csv
+  identical  config-fault.csv
+  identical  control-pause.csv
+  identical  cool-down.csv
+  identical  disagree.csv
+  identical  enable-disable.csv
+  identical  failover.csv
+  identical  flicker-25.csv
+  identical  flicker.csv
+  identical  heat-up.csv
+  identical  relay-feedback.csv
+  identical  reset.csv
+  identical  setpoint-reinit.csv
+  identical  time.csv
+  identical  two-zones.csv
+  identical  two-zones.zone1.csv
+  identical  chatter.ncl
+  identical  compare-gating.ncl
+  identical  config-fault.ncl
+  identical  control-pause.ncl
+  identical  cool-down.ncl
+  identical  disagree.ncl
+  identical  enable-disable.ncl
+  identical  failover.ncl
+  identical  flicker-25.ncl
+  identical  flicker.ncl
+  identical  heat-up.ncl
+  identical  relay-feedback.ncl
+  identical  reset.ncl
+  identical  setpoint-reinit.ncl
+  identical  time.ncl
+  identical  two-zones.ncl

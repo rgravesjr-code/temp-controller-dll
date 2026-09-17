@@ -66,10 +66,10 @@ mkdir "%GATE%"
     echo ============ TempSim.Cli, all scenarios ^(win-x64^) ============
 ) > "%GATE%\TESTLOG.txt"
 "%SIMBUILD%\win-x64\TempSim.Cli.exe" --scenario all --out "%GATE%\out" --quiet >> "%GATE%\TESTLOG.txt" 2>&1
-if %ERRORLEVEL% neq 0 ( echo ERROR: simulator CLI gate failed ^(unpack mismatches^). & exit /b 1 )
+if %ERRORLEVEL% neq 0 ( echo ERROR: simulator CLI gate failed ^(unpack mismatches or failed scenario expectations^). & exit /b 1 )
 echo. >> "%GATE%\TESTLOG.txt"
-echo ============ TempSim.exe headless screenshot ^(win-x64, sensor-failover, 70 s^) ============ >> "%GATE%\TESTLOG.txt"
-"%SIMBUILD%\win-x64\TempSim.exe" --screenshot "%GATE%\tempsim-screenshot.png" --scenario sensor-failover --seconds 70
+echo ============ TempSim.exe headless screenshot ^(win-x64, failover, 75 s^) ============ >> "%GATE%\TESTLOG.txt"
+"%SIMBUILD%\win-x64\TempSim.exe" --screenshot "%GATE%\tempsim-screenshot.png" --scenario failover --seconds 75
 if %ERRORLEVEL% neq 0 ( echo ERROR: simulator screenshot gate failed. & exit /b 1 )
 type "%GATE%\tempsim-screenshot.perf.txt" >> "%GATE%\TESTLOG.txt"
 if exist "%ROOT%sim\testlogs\*.txt" (
@@ -112,8 +112,8 @@ copy "%ROOT%sim\CHANGELOG.md"                 "%OUT%\" >nul
 copy "%ROOT%LICENSE"                          "%OUT%\LICENSE.txt" >nul
 copy "%GATE%\TESTLOG.txt"                     "%OUT%\" >nul
 copy "%GATE%\tempsim-screenshot.png"          "%OUT%\examples\" >nul
-copy "%GATE%\out\sensor-failover.csv"         "%OUT%\examples\" >nul
-copy "%GATE%\out\sensor-failover.ncl"         "%OUT%\examples\" >nul
+copy "%GATE%\out\failover.csv"                "%OUT%\examples\" >nul
+copy "%GATE%\out\failover.ncl"                "%OUT%\examples\" >nul
 if exist "%ROOT%sim\testlogs" xcopy "%ROOT%sim\testlogs" "%OUT%\testlogs\" /s /q /i >nul
 for %%P in (TempSim.Core TempSim.Cli TempSim.Wpf) do (
     xcopy "%ROOT%sim\%%P" "%OUT%\src\%%P\" /s /q /i /exclude:%ROOT%scripts\xcopy_exclude.txt >nul

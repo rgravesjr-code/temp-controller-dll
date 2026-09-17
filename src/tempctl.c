@@ -1,325 +1,513 @@
-/* tempctl.c - TempCtl v2 controller state machine. The spec is tempctl.h. */
+/*
+ * tempctl.c - TempCtl v3 controller (see tempctl.h and TEMPCTL-SPEC-v3.0.0.md).
+ *
+ * All state is static (16 zones), no allocation, no I/O, no <math.h>: the
+ * .so imports memcpy/memset from libc only. Rule numbers (Rx.y) refer to
+ * the v3.0.0 specification.
+ */
 #include "tempctl.h"
 #include <string.h>
 
-enum { MODE_IDLE = 0, MODE_HEAT = 1, MODE_COOL = 2 };
-enum { COND_NONE = 0, COND_HI = 1, COND_LO = 2, COND_BAD = 3 };
+#define NBUCKET    60          /* R5.6: 60 one-minute buckets                     */
+#define BUCKET_MS  60000u
+#define COND_NONE  0
+#define COND_HEAT  1
+#define COND_COOL  2
 
 typedef struct {
-    float buf[TC_MAX_FILTER];
-    int   head;                 /* next write position                    */
-    int   count;                /* valid samples stored, <= TC_MAX_FILTER */
-} TcFilter;
+    int      enable, units;
+    double   setpoint, dbHi, dbLo, hiLim, loLim, hiBand, loBand;
+    uint32_t errTo, dbTo, aspTo;
+    int      t2en;
+    double   t2off, t2tol;
+    uint32_t cmpTo;
+    int      filter;
+    int      fben;
+    uint32_t fbTo;
+} TcCfg;
 
 typedef struct {
-    int      inited;
-    int      mode;              /* MODE_*                                  */
-    int      stopped;           /* latched fault: relays off until Reset   */
-    uint32_t errBits;           /* latched TC_ERRBIT_* (bits 0..8)         */
-    int      active;            /* 1 or 2                                  */
-    TcFilter filt[2];
-    float    filtered[2];       /* NaN until a valid sample exists         */
-    int      warmup[2];
-    int      sensCond[2];  float sensRemain[2];
-    int      disCond;      float disRemain;
-    int      fbCond[2];    float fbRemain[2];    /* heater, cooler          */
-    int      dbCond;       float dbRemain;
-    int      prevHeat, prevCool;                 /* commands of the last call */
+    int      failed, failHigh;          /* latched failure and its direction (R5.5)     */
+    int      oor, oorPrev;              /* out of range this tick / previous tick        */
+    uint64_t accumHalf;                 /* leaky accumulator in half-ms units (R5.4, DRAIN 0.5) */
+    double   raw, val;                  /* as supplied / value used (sensor 2: corrected) */
+    double   avgBuf[TC_MAX_FILTER];
+    int      avgN, avgHead;
+    uint32_t bucket[NBUCKET];           /* hourly transition ring (R5.6)                  */
+    int      bucketIdx;
+    uint32_t bucketElapsed;
+} TcSensor;
+
+typedef struct {
+    int      init;
+    TcCfg    cfg;
+    int      configFault, configInvalid;
+    int      stopped;
+    int32_t  status, warning;           /* last reported values                          */
+    int      doHeater, doCooler;        /* current commands                              */
+    int      prevHeater, prevCooler;    /* commands of the previous CheckTemp (R8.3)     */
     uint32_t lastMs;
+    int      activeSensor;
+    int      initialHc;
+    int      runningOnT2;
+    int      seenCheck;
+    double   ctrlTemp;
+    TcSensor s[2];
+    int      dbCond;  uint32_t dbEl;    /* deadband countdown (R7.1)                     */
+    int      aspCond; uint32_t aspEl;   /* at-setpoint countdown (R7.2)                  */
+    int      cmpCond; uint32_t cmpEl;   /* disagreement countdown (R6.4)                 */
+    int      cmpWarn;
+    int      hfbCond; uint32_t hfbEl;   /* feedback countdowns (R8.4)                    */
+    int      cfbCond; uint32_t cfbEl;
 } TcZone;
 
 static TcZone g_zones[TC_MAX_ZONES];
 
-TC_API uint32_t TcVersion(void)
+/* ------------------------------------------------------------------------ */
+/* numeric helpers (no <math.h>)                                             */
+/* ------------------------------------------------------------------------ */
+static double quiet_nan(void)
 {
-    return ((uint32_t)TC_VERSION_MAJOR << 16) | ((uint32_t)TC_VERSION_MINOR << 8) | TC_VERSION_PATCH;
+    uint64_t bits = 0x7FF8000000000000ull;
+    double d;
+    memcpy(&d, &bits, sizeof d);
+    return d;
 }
-TC_API int32_t TcInputCount(void)  { return TC_INPUT_COUNT; }
-TC_API int32_t TcSignalCount(void) { return TC_SIGNAL_COUNT; }
+static int is_nan(double v)    { return v != v; }
+static int is_finite(double v) { return v == v && (v - v) == 0.0; }
+static int as_bool(double v)   { return v > 0.1 ? 1 : 0; }
+static uint32_t sat_add(uint32_t a, uint32_t b) { uint32_t r = a + b; return r < a ? 0xFFFFFFFFu : r; }
+static uint32_t remain(int cond, uint32_t el, uint32_t to) { return (cond != COND_NONE && to > el) ? to - el : 0u; }
 
-/* NaN / isnan / isinf without <math.h> (keeps the .so on libc only). */
-static float quiet_nan(void)
+/* Whole milliseconds, must be >= 1 (fractions truncated). */
+static int to_ms(double v, uint32_t* out)
 {
-    uint32_t b = 0x7FC00000u; float f; memcpy(&f, &b, 4); return f;
+    if (!(v >= 1.0)) { *out = 0; return 0; }             /* NaN, 0, negative, fractions below 1 */
+    *out = v >= 4294967295.0 ? 0xFFFFFFFFu : (uint32_t)v;
+    return 1;
 }
-static int bad_reading(float t)
-{
-    if (t != t) return 1;
-    if (t > 3.4028235e38f || t < -3.4028235e38f) return 1;
-    return 0;
-}
-static int is_nan(float t) { return t != t; }
 
-/* ---- moving average ---------------------------------------------------- */
-static void filter_push(TcFilter* f, float v)
+/* ------------------------------------------------------------------------ */
+/* setup parsing + config check (R9.5)                                       */
+/* ------------------------------------------------------------------------ */
+static int parse_cfg(const double* a, TcCfg* c)
 {
-    f->buf[f->head] = v;
-    f->head = (f->head + 1) % TC_MAX_FILTER;
-    if (f->count < TC_MAX_FILTER) f->count++;
+    int ok = 1;
+    double f;
+
+    c->enable = as_bool(a[TC_SETUP_TEMP_CTRL_ENABLE]);
+    if (is_nan(a[TC_SETUP_TEMP_CTRL_ENABLE])) ok = 0;
+
+    c->units = a[TC_SETUP_TEMP_UNITS] == 0.0 ? 0 : a[TC_SETUP_TEMP_UNITS] == 1.0 ? 1 : -1;
+    if (c->units < 0) ok = 0;                                              /* check 1 */
+
+    c->setpoint = a[TC_SETUP_SETPOINT];
+    c->dbHi     = a[TC_SETUP_DEADBAND_HI];
+    c->dbLo     = a[TC_SETUP_DEADBAND_LO];
+    c->hiLim    = a[TC_SETUP_HI_LIMIT];
+    c->loLim    = a[TC_SETUP_LO_LIMIT];
+    if (!(c->dbHi >= 0.0) || !(c->dbLo >= 0.0)) ok = 0;                   /* check 2 (NaN fails) */
+    if (c->dbHi == 0.0 && c->dbLo == 0.0) ok = 0;
+    c->hiBand = c->setpoint + c->dbHi;
+    c->loBand = c->setpoint - c->dbLo;
+    if (!(c->loLim < c->loBand) || !(c->hiBand < c->hiLim)) ok = 0;       /* check 3 (NaN/Inf fails) */
+
+    if (!to_ms(a[TC_SETUP_ERROR_TIMEOUT],    &c->errTo)) ok = 0;          /* check 4 */
+    if (!to_ms(a[TC_SETUP_DEADBAND_TIMEOUT], &c->dbTo))  ok = 0;
+    if (!to_ms(a[TC_SETUP_AT_SETPT_TIMEOUT], &c->aspTo)) ok = 0;
+
+    c->t2en  = as_bool(a[TC_SETUP_TEMP2_ENABLE]);
+    if (is_nan(a[TC_SETUP_TEMP2_ENABLE])) ok = 0;
+    c->t2off = a[TC_SETUP_TEMP2_OFFSET];
+    c->t2tol = a[TC_SETUP_TEMP2_TOLERANCE];
+    c->cmpTo = 0;
+    if (c->t2en) {                                                         /* check 6 */
+        if (!is_finite(c->t2off)) ok = 0;
+        if (!(c->t2tol >= 0.0)) ok = 0;
+        if (!to_ms(a[TC_SETUP_TEMP_COMPARE_TIMEOUT], &c->cmpTo)) ok = 0;
+    }
+
+    f = a[TC_SETUP_FILTER_POINTS];                                         /* R4.2: never faults */
+    c->filter = (f >= 1.0 && f < (double)(TC_MAX_FILTER + 1)) ? (int)f : TC_DEFAULT_FILTER;
+
+    c->fben = as_bool(a[TC_SETUP_FEEDBACK_ENABLE]);
+    if (is_nan(a[TC_SETUP_FEEDBACK_ENABLE])) ok = 0;
+    c->fbTo = 0;
+    if (c->fben) {                                                         /* check 7 */
+        if (!to_ms(a[TC_SETUP_RELAY_FEEDBACK_TIMEOUT], &c->fbTo)) ok = 0;
+    }
+    return ok;
 }
-static float filter_value(const TcFilter* f, int n)
+
+/* ------------------------------------------------------------------------ */
+/* per-zone state                                                            */
+/* ------------------------------------------------------------------------ */
+/* Clear everything except the stored setup and the config flags. */
+static void clear_runtime(TcZone* z)
 {
-    int use = (f->count < n) ? f->count : n;
-    if (use <= 0) return quiet_nan();
+    int i;
+    z->stopped = 0;
+    z->status = TC_ST_TEMP_CTRL_DISABLED;
+    z->warning = TC_WN_NONE;
+    z->doHeater = z->doCooler = 0;
+    z->prevHeater = z->prevCooler = 0;
+    z->activeSensor = 1;
+    z->initialHc = 0;
+    z->runningOnT2 = 0;
+    z->seenCheck = 0;
+    z->ctrlTemp = quiet_nan();
+    for (i = 0; i < 2; i++) {
+        memset(&z->s[i], 0, sizeof z->s[i]);
+        z->s[i].raw = z->s[i].val = quiet_nan();
+    }
+    z->dbCond = z->aspCond = z->cmpCond = z->hfbCond = z->cfbCond = COND_NONE;
+    z->dbEl = z->aspEl = z->cmpEl = z->hfbEl = z->cfbEl = 0;
+    z->cmpWarn = 0;
+}
+
+static uint32_t elapsed_ms(TcZone* z, uint32_t nowMs)
+{
+    uint32_t d = nowMs - z->lastMs;                 /* 2^32 wrap handled by unsigned arithmetic (R1.4) */
+    if (d >= 0x80000000u) d = 0;                    /* backwards step counts as 0 ms (R1.5)          */
+    z->lastMs = nowMs;
+    return d;
+}
+
+/*
+ * Time-qualified condition. newCond is what this tick observes (COND_NONE
+ * clears). The countdown starts on the tick that first observes a
+ * condition and can expire only on a later tick, when elapsed >= timeout.
+ * Returns 1 on the tick it expires.
+ */
+static int countdown(int* cond, uint32_t* el, int newCond, uint32_t timeout, uint32_t dt)
+{
+    if (newCond == COND_NONE) { *cond = COND_NONE; *el = 0; return 0; }
+    if (*cond != newCond)     { *cond = newCond;   *el = 0; return 0; }
+    *el = sat_add(*el, dt);
+    return *el >= timeout;
+}
+
+static double avg_value(const TcSensor* s)
+{
     double sum = 0.0;
-    int idx = f->head;
-    for (int i = 0; i < use; i++) {
-        idx = (idx + TC_MAX_FILTER - 1) % TC_MAX_FILTER;
-        sum += f->buf[idx];
-    }
-    return (float)(sum / use);
+    int i;
+    if (s->avgN == 0) return quiet_nan();
+    for (i = 0; i < s->avgN; i++) sum += s->avgBuf[i];
+    return sum / (double)s->avgN;
 }
 
-/* ---- countdown: returns 1 when it expires this tick ---------------------- */
-static int countdown(int* cond, float* remain, int newCond, float timeout, float dt)
+static void avg_push(TcSensor* s, double v, int n)
 {
-    if (newCond != *cond) {                 /* starts at first observation */
-        *cond = newCond;
-        *remain = timeout;
-        dt = 0.0f;
-    }
-    if (newCond == COND_NONE) { *remain = 0.0f; return 0; }
-    *remain -= dt;
-    if (*remain <= 0.0f) { *remain = 0.0f; return 1; }
-    return 0;
-}
-static void clear_cd(int* cond, float* remain) { *cond = COND_NONE; *remain = 0.0f; }
-static void clear_timers(TcZone* z)
-{
-    clear_cd(&z->sensCond[0], &z->sensRemain[0]);
-    clear_cd(&z->sensCond[1], &z->sensRemain[1]);
-    clear_cd(&z->disCond, &z->disRemain);
-    clear_cd(&z->fbCond[0], &z->fbRemain[0]);
-    clear_cd(&z->fbCond[1], &z->fbRemain[1]);
-    clear_cd(&z->dbCond, &z->dbRemain);
+    s->avgBuf[s->avgHead] = v;
+    s->avgHead = (s->avgHead + 1) % n;
+    if (s->avgN < n) s->avgN++;
 }
 
-/* ---- configuration ------------------------------------------------------ */
-typedef struct {
-    float sp, dbHi, dbLo, hi, lo, errTO, dbTO, tol, hiBand, loBand;
-    int   nFilt, t2en, fbEn, warn;
-} TcCfg;
-
-static void read_cfg(const float* in, TcCfg* c)
+static void ring_advance(TcSensor* s, uint32_t dt)
 {
-    c->sp = in[TC_SETPOINT]; c->dbHi = in[TC_DEADBAND_HI]; c->dbLo = in[TC_DEADBAND_LO];
-    c->hi = in[TC_HI_LIMIT]; c->lo = in[TC_LO_LIMIT];
-    c->errTO = in[TC_ERROR_TIMEOUT]; c->dbTO = in[TC_DEADBAND_TIMEOUT];
-    c->tol = in[TC_TEMP2_TOLERANCE];
-    c->t2en = in[TC_TEMP2_ENABLE] > 0.5f;
-    c->fbEn = in[TC_FEEDBACK_ENABLE] > 0.5f;
-    c->hiBand = c->sp + c->dbHi;
-    c->loBand = c->sp - c->dbLo;
-    c->warn = 0;
-
-    float fp = in[TC_FILTER_POINTS];
-    if (is_nan(fp) || fp < 0.0f) { c->nFilt = TC_DEFAULT_FILTER; c->warn = 1; }
-    else if (fp < 1.0f)          { c->nFilt = TC_DEFAULT_FILTER; }          /* 0 = default */
-    else if (fp > (float)TC_MAX_FILTER) { c->nFilt = TC_MAX_FILTER; c->warn = 1; }
-    else                         { c->nFilt = (int)fp; }
-
-    if (!(c->dbHi >= 0.0f && c->dbLo >= 0.0f)) c->warn = 1;
-    if (!(c->lo < c->loBand && c->hiBand < c->hi)) c->warn = 1;
-    if (!(c->errTO >= 0.0f && c->dbTO >= 0.0f)) c->warn = 1;
-    if (!(c->tol >= 0.0f)) c->warn = 1;
-}
-
-static void update_filters(TcZone* z, const float* in, const TcCfg* c)
-{
-    for (int s = 0; s < 2; s++) {
-        float raw = in[TC_TEMP1 + s];
-        if (!bad_reading(raw)) filter_push(&z->filt[s], raw);
-        z->filtered[s] = filter_value(&z->filt[s], c->nFilt);
-        z->warmup[s] = z->filt[s].count < c->nFilt;
+    s->bucketElapsed = sat_add(s->bucketElapsed, dt);
+    if (s->bucketElapsed >= BUCKET_MS) {
+        uint32_t n = s->bucketElapsed / BUCKET_MS;
+        s->bucketElapsed %= BUCKET_MS;
+        if (n >= NBUCKET) {
+            memset(s->bucket, 0, sizeof s->bucket);
+        } else {
+            while (n--) { s->bucketIdx = (s->bucketIdx + 1) % NBUCKET; s->bucket[s->bucketIdx] = 0; }
+        }
     }
 }
 
-static uint32_t sensor_bit(int s, int cond)
+static uint32_t ring_count(const TcSensor* s)
 {
-    uint32_t b = (cond == COND_HI) ? TC_ERRBIT_T1_HI : (cond == COND_LO) ? TC_ERRBIT_T1_LO : TC_ERRBIT_T1_BAD;
-    return s == 0 ? b : (b << 3);
+    uint32_t total = 0;
+    int i;
+    for (i = 0; i < NBUCKET; i++) total = sat_add(total, s->bucket[i]);
+    return total;
 }
 
-static void stop(TcZone* z)
+/* Range check, hourly transitions, leaky accumulator, failure, average (R4, R5). */
+static void update_sensor(TcSensor* s, double raw, double val, const TcCfg* c, uint32_t dt)
+{
+    int bad  = !is_finite(val);                     /* NaN/Inf: out of range high (R4.4) */
+    int high = bad || val > c->hiLim;
+    int low  = !bad && val < c->loLim;
+
+    s->raw = raw;
+    s->val = val;
+    s->oorPrev = s->oor;
+    s->oor = high || low;
+
+    ring_advance(s, dt);
+    if (s->oor && !s->oorPrev) s->bucket[s->bucketIdx] = sat_add(s->bucket[s->bucketIdx], 1);
+
+    if (!s->failed) {                               /* R5.3: a failed sensor is not re-evaluated */
+        /* R5.4 (Amendment A): out of range charges the full elapsed time, in range drains half
+         * of it (DRAIN = 0.5), so anything out of range more than a third of the time fails.
+         * Kept in half-ms units so odd loop periods stay exact. Every out-of-range tick charges,
+         * the first one included (the one-tick grace applies to the relay countdowns only). */
+        if (s->oor) s->accumHalf += 2ull * dt;
+        else        s->accumHalf = s->accumHalf > dt ? s->accumHalf - dt : 0;
+        if (s->accumHalf >= 2ull * c->errTo) { s->failed = 1; s->failHigh = high; }
+    }
+    if (!s->oor) avg_push(s, val, c->filter);       /* R4.3: only in-range samples are averaged */
+}
+
+static int32_t compute_warning(const TcZone* z)
+{
+    const TcCfg* c = &z->cfg;
+    if (z->s[0].oor)                 return TC_WN_TEMP1_OUT_OF_RANGE;
+    if (c->t2en && z->s[1].oor)      return TC_WN_TEMP2_OUT_OF_RANGE;
+    if (c->fben && z->hfbCond)       return TC_WN_HEATER_FB_MISMATCH;
+    if (c->fben && z->cfbCond)       return TC_WN_COOLER_FB_MISMATCH;
+    if (z->cmpWarn)                  return TC_WN_TEMP_DISAGREE;
+    if (z->runningOnT2)              return TC_WN_RUNNING_ON_TEMP2;
+    return TC_WN_NONE;
+}
+
+static void stop_zone(TcZone* z, int32_t fault)
 {
     z->stopped = 1;
-    z->mode = MODE_IDLE;
-    z->prevHeat = z->prevCool = 0;
-    clear_timers(z);
+    z->doHeater = z->doCooler = 0;
+    z->status = fault;
 }
 
-/* ---- one control tick --------------------------------------------------- */
-static void step(TcZone* z, const float* in, const TcCfg* c, uint32_t nowMs)
+static void write_outputs(const TcZone* z, int32_t* doHeater, int32_t* doCooler, int32_t* status, int32_t* warning)
 {
-    float dt = (float)(uint32_t)(nowMs - z->lastMs);   /* wrap-safe */
+    if (doHeater) *doHeater = z->doHeater;
+    if (doCooler) *doCooler = z->doCooler;
+    *status = z->status;
+    *warning = z->warning;
+}
+
+/* Status after Init/Reset, before the first CheckTemp. */
+static int32_t rest_status(const TcZone* z)
+{
+    if (!z->cfg.enable) return TC_ST_TEMP_CTRL_DISABLED;
+    if (z->stopped)     return z->status;
+    if (z->doHeater)    return TC_ST_HEATER_ON;
+    if (z->doCooler)    return TC_ST_COOLER_ON;
+    return TC_ST_TEMP_AT_SETPT;
+}
+
+/* ------------------------------------------------------------------------ */
+/* exports                                                                   */
+/* ------------------------------------------------------------------------ */
+TC_API int32_t TcVersion(void)    { return (TC_VERSION_MAJOR << 16) | (TC_VERSION_MINOR << 8) | TC_VERSION_PATCH; }
+TC_API int32_t TcSetupCount(void) { return TC_SETUP_COUNT; }
+TC_API int32_t TcDiagCount(void)  { return TC_DIAG_COUNT; }
+
+TC_API int32_t TcInit(int32_t zone, uint32_t nowMs,
+                      const double* setupArray, int32_t setupLen,
+                      int32_t* status, int32_t* warning)
+{
+    TcZone* z;
+    TcCfg c;
+    int ok, wasRunning, keepH = 0, keepC = 0;
+
+    if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
+    if (!setupArray || !status || !warning || setupLen != TC_SETUP_COUNT) return TC_ERR_ARG;
+    z = &g_zones[zone];
+
+    ok = parse_cfg(setupArray, &c);
+    wasRunning = z->init && z->cfg.enable && !z->stopped;                 /* R9.3 */
+    if (wasRunning && c.enable && ok) { keepH = z->doHeater; keepC = z->doCooler; }
+
+    clear_runtime(z);
+    z->init = 1;
+    z->cfg = c;
     z->lastMs = nowMs;
+    z->configFault = z->configInvalid = 0;
+    z->doHeater = z->prevHeater = keepH;
+    z->doCooler = z->prevCooler = keepC;
+    if (!ok) {                                                             /* R9.5 */
+        if (c.enable) { z->configFault = 1; stop_zone(z, TC_ST_CONFIG_FAULT); }
+        else          { z->configInvalid = 1; }
+    }
+    z->status = rest_status(z);
+    z->warning = z->configInvalid ? TC_WN_CONFIG_INVALID : TC_WN_NONE;
+    write_outputs(z, 0, 0, status, warning);
+    return TC_OK;
+}
 
-    update_filters(z, in, c);
-    if (z->stopped) return;                              /* latched until Reset/Init */
+TC_API int32_t TcReset(int32_t zone, uint32_t nowMs, int32_t* status, int32_t* warning)
+{
+    TcZone* z;
+    if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
+    if (!status || !warning) return TC_ERR_ARG;
+    z = &g_zones[zone];
+    if (!z->init) { *status = TC_ST_TEMP_CTRL_DISABLED; *warning = TC_WN_NONE; return TC_OK; }   /* R2.4 */
 
-    /* --- sensor rationality ---------------------------------------------- */
-    int nSens = c->t2en ? 2 : 1;
-    for (int s = 0; s < 2; s++) {
-        uint32_t mask = s == 0 ? TC_ERRBIT_SENSOR1 : TC_ERRBIT_SENSOR2;
-        if (s >= nSens || (z->errBits & mask)) { clear_cd(&z->sensCond[s], &z->sensRemain[s]); continue; }
-        float raw = in[TC_TEMP1 + s], f = z->filtered[s];
-        int cond = (bad_reading(raw) || is_nan(f)) ? COND_BAD : (f > c->hi) ? COND_HI : (f < c->lo) ? COND_LO : COND_NONE;
-        if (countdown(&z->sensCond[s], &z->sensRemain[s], cond, c->errTO, dt)) {
-            z->errBits |= sensor_bit(s, cond);
-            clear_cd(&z->sensCond[s], &z->sensRemain[s]);
+    clear_runtime(z);                                                      /* R9.2: keeps cfg + config flags */
+    z->lastMs = nowMs;
+    if (z->configFault) stop_zone(z, TC_ST_CONFIG_FAULT);                  /* Reset does not clear it */
+    z->status = rest_status(z);
+    z->warning = z->configInvalid ? TC_WN_CONFIG_INVALID : TC_WN_NONE;
+    write_outputs(z, 0, 0, status, warning);
+    return TC_OK;
+}
+
+TC_API int32_t TcCheckTemp(int32_t zone, uint32_t nowMs,
+                           double temp1, double temp2,
+                           int32_t diHeaterFB, int32_t diCoolerFB,
+                           int32_t* doHeater, int32_t* doCooler,
+                           int32_t* status, int32_t* warning)
+{
+    TcZone* z;
+    const TcCfg* c;
+    uint32_t dt;
+    int32_t fault = 0;
+    int activeOor;
+
+    if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
+    if (!doHeater || !doCooler || !status || !warning) return TC_ERR_ARG;
+    z = &g_zones[zone];
+    c = &z->cfg;
+
+    /* R2: disabled or never initialised -> no action */
+    if (!z->init || !c->enable) {
+        z->doHeater = z->doCooler = 0;
+        z->status = TC_ST_TEMP_CTRL_DISABLED;
+        z->warning = z->configInvalid ? TC_WN_CONFIG_INVALID : TC_WN_NONE;
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
+    dt = elapsed_ms(z, nowMs);
+
+    /* R9.6: stopped on a fault -> relays 0, status latched, warning frozen */
+    if (z->stopped) {
+        z->doHeater = z->doCooler = 0;
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
+    z->seenCheck = 1;
+
+    /* ---- sensors (R4, R5, R6.1) ------------------------------------- */
+    update_sensor(&z->s[0], temp1, temp1, c, dt);
+    if (c->t2en) update_sensor(&z->s[1], temp2, temp2 + c->t2off, c, dt);
+    else { z->s[1].oor = 0; z->s[1].raw = z->s[1].val = quiet_nan(); }
+
+    /* ---- sensor failure effects (R5.5) ------------------------------ */
+    if (!c->t2en) {
+        if (z->s[0].failed) fault = z->s[0].failHigh ? TC_ST_TEMP1_FAIL_HIGH : TC_ST_TEMP1_FAIL_LOW;
+    } else if (z->s[0].failed && z->s[1].failed) {
+        fault = TC_ST_BOTH_SENSORS_FAILED;
+    } else if (z->s[0].failed && z->activeSensor == 1) {
+        z->activeSensor = 2;                                               /* failover, never back */
+        z->runningOnT2 = 1;
+    }
+    z->ctrlTemp = z->activeSensor == 1 ? z->s[0].val : z->s[1].val;
+
+    /* ---- two-sensor comparison (R6) --------------------------------- */
+    if (!fault) {
+        int gate = c->t2en && !z->s[0].failed && !z->s[1].failed && z->initialHc
+                && z->s[0].avgN == c->filter && z->s[1].avgN == c->filter
+                && !z->s[0].oor && !z->s[1].oor;                           /* R6.2 */
+        if (gate) {
+            double diff = avg_value(&z->s[0]) - avg_value(&z->s[1]);
+            int dis = (diff > c->t2tol || -diff > c->t2tol) ? COND_HEAT : COND_NONE;   /* R6.3 */
+            if (countdown(&z->cmpCond, &z->cmpEl, dis, c->cmpTo, dt)) fault = TC_ST_TEMP_DISAGREE_FAULT;
+            z->cmpWarn = z->cmpCond != COND_NONE && z->cmpEl >= c->cmpTo / 10u;        /* R6.4 */
+        } else {                                                           /* R6.5: pause = restart from zero */
+            z->cmpCond = COND_NONE; z->cmpEl = 0; z->cmpWarn = 0;
         }
     }
-    int failed1 = (z->errBits & TC_ERRBIT_SENSOR1) != 0;
-    int failed2 = c->t2en && (z->errBits & TC_ERRBIT_SENSOR2) != 0;
 
-    /* --- failover / stop ------------------------------------------------- */
-    if (c->t2en) {
-        if (z->active == 1 && failed1 && !failed2) z->active = 2;
-        else if (z->active == 2 && failed2 && !failed1) z->active = 1;
-        if (failed1 && failed2) { stop(z); return; }
-    } else {
-        z->active = 1;
-        if (failed1) { stop(z); return; }
+    /* ---- relay feedback (R8) ---------------------------------------- */
+    if (c->fben) {
+        int hm = ((diHeaterFB != 0) != (z->prevHeater != 0)) ? COND_HEAT : COND_NONE;
+        int cm = ((diCoolerFB != 0) != (z->prevCooler != 0)) ? COND_COOL : COND_NONE;
+        int hf = countdown(&z->hfbCond, &z->hfbEl, hm, c->fbTo, dt);
+        int cf = countdown(&z->cfbCond, &z->cfbEl, cm, c->fbTo, dt);
+        if (!fault && hf) fault = TC_ST_HEATER_FB_FAULT;
+        if (!fault && cf) fault = TC_ST_COOLER_FB_FAULT;
     }
 
-    /* --- disagreement ---------------------------------------------------- */
-    if (c->t2en && !failed1 && !failed2 && !(z->errBits & TC_ERRBIT_DISAGREE)
-        && !is_nan(z->filtered[0]) && !is_nan(z->filtered[1])) {
-        float d = z->filtered[0] - z->filtered[1];
-        if (d < 0.0f) d = -d;
-        int cond = d > c->tol ? COND_HI : COND_NONE;
-        if (countdown(&z->disCond, &z->disRemain, cond, c->errTO, dt)) {
-            z->errBits |= TC_ERRBIT_DISAGREE;
-            clear_cd(&z->disCond, &z->disRemain);
+    if (fault) {                                                           /* R9.6 */
+        z->warning = compute_warning(z);
+        stop_zone(z, fault);
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
+
+    /* ---- control (R7), paused while the active sensor is out of range (R5.7) */
+    activeOor = z->activeSensor == 1 ? z->s[0].oor : z->s[1].oor;
+    if (!activeOor) {
+        double ct = z->ctrlTemp;
+        if (z->doHeater) {                                                 /* R7.2 release */
+            if (countdown(&z->aspCond, &z->aspEl, ct >= c->setpoint ? COND_HEAT : COND_NONE, c->aspTo, dt)) {
+                z->doHeater = 0; z->initialHc = 1; z->aspCond = COND_NONE; z->aspEl = 0;
+            }
+        } else if (z->doCooler) {
+            if (countdown(&z->aspCond, &z->aspEl, ct <= c->setpoint ? COND_COOL : COND_NONE, c->aspTo, dt)) {
+                z->doCooler = 0; z->initialHc = 1; z->aspCond = COND_NONE; z->aspEl = 0;
+            }
         }
-    } else {
-        clear_cd(&z->disCond, &z->disRemain);
-    }
-
-    /* --- relay feedback (against the commands of the previous call) ----- */
-    for (int r = 0; r < 2; r++) {
-        uint32_t bit = r == 0 ? TC_ERRBIT_HEATER_FB : TC_ERRBIT_COOLER_FB;
-        if (!c->fbEn || (z->errBits & bit)) { clear_cd(&z->fbCond[r], &z->fbRemain[r]); continue; }
-        int fb  = in[r == 0 ? TC_HEATER_FEEDBACK : TC_COOLER_FEEDBACK] > 0.5f;
-        int cmd = r == 0 ? z->prevHeat : z->prevCool;
-        int cond = fb != cmd ? COND_HI : COND_NONE;
-        if (countdown(&z->fbCond[r], &z->fbRemain[r], cond, c->errTO, dt)) {
-            z->errBits |= bit;
-            clear_cd(&z->fbCond[r], &z->fbRemain[r]);
-        }
-    }
-
-    /* --- heating / cooling on ControlTemp -------------------------------- */
-    float t = z->filtered[z->active - 1];
-    if (bad_reading(in[TC_TEMP1 + z->active - 1]) || is_nan(t)) {
-        z->mode = MODE_IDLE;                             /* relays off while the reading is unusable */
-        clear_cd(&z->dbCond, &z->dbRemain);
-    } else {
-        if (z->mode == MODE_HEAT && t >= c->sp) z->mode = MODE_IDLE;
-        else if (z->mode == MODE_COOL && t <= c->sp) z->mode = MODE_IDLE;
-
-        if (z->mode != MODE_IDLE) {
-            clear_cd(&z->dbCond, &z->dbRemain);          /* running: deadband timer not in play */
-        } else {
-            int dbc = (t > c->hiBand) ? COND_HI : (t < c->loBand) ? COND_LO : COND_NONE;
-            if (countdown(&z->dbCond, &z->dbRemain, dbc, c->dbTO, dt)) {
-                z->mode = (dbc == COND_HI) ? MODE_COOL : MODE_HEAT;
-                clear_cd(&z->dbCond, &z->dbRemain);
+        if (!z->doHeater && !z->doCooler) {                                /* idle: R7.1 engage */
+            int cond = ct > c->hiBand ? COND_COOL : ct < c->loBand ? COND_HEAT : COND_NONE;
+            if (cond == COND_NONE) z->initialHc = 1;                       /* R7.5 (2) */
+            if (countdown(&z->dbCond, &z->dbEl, cond, c->dbTo, dt)) {
+                if (cond == COND_HEAT) z->doHeater = 1; else z->doCooler = 1;
+                z->dbCond = COND_NONE; z->dbEl = 0;
             }
         }
     }
-    z->prevHeat = z->mode == MODE_HEAT;
-    z->prevCool = z->mode == MODE_COOL;
+
+    z->status = z->doHeater ? TC_ST_HEATER_ON
+              : z->doCooler ? TC_ST_COOLER_ON
+              : z->dbCond == COND_HEAT ? TC_ST_HEAT_PENDING
+              : z->dbCond == COND_COOL ? TC_ST_COOL_PENDING
+              : TC_ST_TEMP_AT_SETPT;
+    z->warning = compute_warning(z);
+    z->prevHeater = z->doHeater;
+    z->prevCooler = z->doCooler;
+    write_outputs(z, doHeater, doCooler, status, warning);
+    return TC_OK;
 }
 
-/* ---- outputs ------------------------------------------------------------ */
-static float min_remain(const TcZone* z)
+TC_API int32_t TcGetDiag(int32_t zone, double* diagArray, int32_t diagLen)
 {
-    float m = 0.0f;
-    const int*   conds[]   = { &z->sensCond[0], &z->sensCond[1], &z->disCond, &z->fbCond[0], &z->fbCond[1] };
-    const float* remains[] = { &z->sensRemain[0], &z->sensRemain[1], &z->disRemain, &z->fbRemain[0], &z->fbRemain[1] };
-    for (int i = 0; i < 5; i++) {
-        if (*conds[i] == COND_NONE) continue;
-        if (m == 0.0f || *remains[i] < m) m = *remains[i];
-    }
-    return m;
-}
+    const TcZone* z;
+    const TcCfg* c;
+    double nan = quiet_nan();
+    double* d = diagArray;
 
-static void write_out(const TcZone* z, const float* in, const TcCfg* c, float* out)
-{
-    float tmp[TC_INPUT_COUNT];
-    memcpy(tmp, in, sizeof tmp);                        /* in and out may alias */
-    tmp[TC_HEATING_CMD] = (z->mode == MODE_HEAT) ? 1.0f : 0.0f;
-    tmp[TC_COOLING_CMD] = (z->mode == MODE_COOL) ? 1.0f : 0.0f;
-    memcpy(out, tmp, sizeof tmp);
-
-    int failed1 = (z->errBits & TC_ERRBIT_SENSOR1) != 0;
-    int failed2 = c->t2en && (z->errBits & TC_ERRBIT_SENSOR2) != 0;
-    float errRemain = z->stopped ? 0.0f : min_remain(z);
-
-    int status;
-    if (z->stopped)                          status = TC_STATUS_STOPPED;
-    else if (errRemain > 0.0f)               status = TC_STATUS_ERROR_PENDING;
-    else if (z->warmup[z->active - 1])       status = TC_STATUS_WARMUP;
-    else if (c->t2en && (failed1 != failed2)) status = TC_STATUS_DEGRADED;
-    else if (z->mode == MODE_HEAT)           status = TC_STATUS_HEATING;
-    else if (z->mode == MODE_COOL)           status = TC_STATUS_COOLING;
-    else if (z->dbCond == COND_HI)           status = TC_STATUS_COOL_PENDING;
-    else if (z->dbCond == COND_LO)           status = TC_STATUS_HEAT_PENDING;
-    else                                     status = TC_STATUS_IN_BAND;
-
-    out[TC_ERROR_STATUS]    = (float)(z->errBits | (c->warn ? TC_ERRBIT_CONFIG : 0u));
-    out[TC_TEMP_STATUS]     = (float)status;
-    out[TC_CONTROL_TEMP]    = z->filtered[z->active - 1];
-    out[TC_TEMP1_FILTERED]  = z->filtered[0];
-    out[TC_TEMP2_FILTERED]  = c->t2en ? z->filtered[1] : quiet_nan();
-    out[TC_HI_BAND]         = c->hiBand;
-    out[TC_LO_BAND]         = c->loBand;
-    out[TC_ERROR_REMAIN_MS] = errRemain;
-    out[TC_DB_REMAIN_MS]    = (z->dbCond != COND_NONE) ? z->dbRemain : 0.0f;
-    out[TC_ACTIVE_SENSOR]   = (float)z->active;
-}
-
-TC_API int32_t TcStep(int32_t zone, int32_t action, uint32_t nowMs,
-                      const float* in, int32_t inLen,
-                      float* out, int32_t outLen)
-{
-    if (!in || !out || inLen < TC_INPUT_COUNT || outLen < TC_SIGNAL_COUNT) return TC_ERR_ARG;
     if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
-    TcZone* z = &g_zones[zone];
-    TcCfg cfg;
-    read_cfg(in, &cfg);
+    if (!diagArray || diagLen < TC_DIAG_COUNT) return TC_ERR_ARG;
+    z = &g_zones[zone];
+    c = &z->cfg;
 
-    switch (action) {
-    case TC_ACTION_INIT:
-        memset(z, 0, sizeof *z);
-        z->inited = 1;
-        z->active = 1;
-        z->lastMs = nowMs;
-        if (in[TC_HEATING_CMD] > 0.5f)      z->mode = MODE_HEAT;
-        else if (in[TC_COOLING_CMD] > 0.5f) z->mode = MODE_COOL;
-        z->prevHeat = z->mode == MODE_HEAT;
-        z->prevCool = z->mode == MODE_COOL;
-        update_filters(z, in, &cfg);
-        break;
-    case TC_ACTION_RESET:
-        z->inited = 1;
-        z->stopped = 0;
-        z->errBits = 0;
-        z->mode = MODE_IDLE;
-        z->active = 1;
-        z->prevHeat = z->prevCool = 0;
-        z->lastMs = nowMs;
-        clear_timers(z);
-        update_filters(z, in, &cfg);
-        break;
-    case TC_ACTION_STEP:
-        if (!z->inited) return TC_ERR_NOT_INIT;
-        step(z, in, &cfg, nowMs);
-        break;
-    default:
-        return TC_ERR_ACTION;
+    if (!z->init) {
+        int i;
+        for (i = 0; i < TC_DIAG_COUNT; i++) d[i] = 0.0;
+        d[TC_DIAG_CONTROL_TEMP] = d[TC_DIAG_TEMP1_RAW] = d[TC_DIAG_TEMP2_RAW] = d[TC_DIAG_TEMP2_CORRECTED] = nan;
+        d[TC_DIAG_TEMP1_AVG] = d[TC_DIAG_TEMP2_AVG] = d[TC_DIAG_HI_BAND] = d[TC_DIAG_LO_BAND] = nan;
+        d[TC_DIAG_ACTIVE_SENSOR] = 1.0;
+        return TC_OK;
     }
-    write_out(z, in, &cfg, out);
-    return cfg.warn ? TC_WARN_CONFIG : TC_OK;
+    d[TC_DIAG_CONTROL_TEMP]     = z->seenCheck ? z->ctrlTemp : nan;
+    d[TC_DIAG_ACTIVE_SENSOR]    = (double)z->activeSensor;
+    d[TC_DIAG_TEMP1_RAW]        = z->seenCheck ? z->s[0].raw : nan;
+    d[TC_DIAG_TEMP2_RAW]        = (z->seenCheck && c->t2en) ? z->s[1].raw : nan;
+    d[TC_DIAG_TEMP2_CORRECTED]  = (z->seenCheck && c->t2en) ? z->s[1].val : nan;
+    d[TC_DIAG_TEMP1_AVG]        = avg_value(&z->s[0]);
+    d[TC_DIAG_TEMP2_AVG]        = c->t2en ? avg_value(&z->s[1]) : nan;
+    d[TC_DIAG_HI_BAND]          = c->hiBand;
+    d[TC_DIAG_LO_BAND]          = c->loBand;
+    d[TC_DIAG_INITIAL_HC_FLAG]  = (double)z->initialHc;
+    d[TC_DIAG_DEADBAND_REMAIN_MS]  = (double)remain(z->dbCond,  z->dbEl,  c->dbTo);
+    d[TC_DIAG_AT_SETPT_REMAIN_MS]  = (double)remain(z->aspCond, z->aspEl, c->aspTo);
+    d[TC_DIAG_COMPARE_REMAIN_MS]   = (double)remain(z->cmpCond, z->cmpEl, c->cmpTo);
+    d[TC_DIAG_HEATER_FB_REMAIN_MS] = (double)remain(z->hfbCond, z->hfbEl, c->fbTo);
+    d[TC_DIAG_COOLER_FB_REMAIN_MS] = (double)remain(z->cfbCond, z->cfbEl, c->fbTo);
+    d[TC_DIAG_TEMP1_OOR_ACCUM_MS]  = (double)z->s[0].accumHalf / 2.0;
+    d[TC_DIAG_TEMP2_OOR_ACCUM_MS]  = (double)z->s[1].accumHalf / 2.0;
+    d[TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR] = (double)ring_count(&z->s[0]);
+    d[TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR] = (double)ring_count(&z->s[1]);
+    d[TC_DIAG_STATUS_MIRROR]    = (double)z->status;
+    d[TC_DIAG_WARNING_MIRROR]   = (double)z->warning;
+    d[TC_DIAG_DO_HEATER_MIRROR] = (double)z->doHeater;
+    d[TC_DIAG_DO_COOLER_MIRROR] = (double)z->doCooler;
+    d[TC_DIAG_APPLIED_FILTER_POINTS] = (double)c->filter;
+    d[TC_DIAG_ZONE_INITIALIZED] = 1.0;
+    return TC_OK;
 }

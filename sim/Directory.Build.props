@@ -1,9 +1,6 @@
 <Project>
-  <!-- TempSim has its own version line, independent of the TempCtl controller (TC_VERSION_* in
-       src\tempctl.h) and of CanTp. Bump it here, in sim\CHANGELOG.md and nowhere else;
-       scripts\validate_sim_version.ps1 checks both before package_sim.bat stages a package.
-       The programs print this version next to the tempctl / cantp versions they loaded. -->
+  <!-- TempSim's own version, independent of the tempctl / cantp libraries it embeds. Bump with sim/CHANGELOG.md. -->
   <PropertyGroup>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
   </PropertyGroup>
 </Project>

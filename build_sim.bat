@@ -33,8 +33,8 @@ if /i "%MODE%"=="linux" goto :done
 :shot
 echo === headless checks (win-x64) ===
 "%OUT%\win-x64\TempSim.Cli.exe" --scenario all --out "%OUT%\win-x64-out" --quiet
-if errorlevel 1 ( echo ERROR: TempSim.Cli reported unpack mismatches & exit /b 1 )
-"%OUT%\win-x64\TempSim.exe" --screenshot "%OUT%\tempsim-screenshot.png" --scenario sensor-failover --seconds 70
+if errorlevel 1 ( echo ERROR: TempSim.Cli reported unpack mismatches or failed scenario expectations & exit /b 1 )
+"%OUT%\win-x64\TempSim.exe" --screenshot "%OUT%\tempsim-screenshot.png" --scenario failover --seconds 75
 if errorlevel 1 ( echo ERROR: TempSim screenshot run failed & exit /b 1 )
 type "%OUT%\tempsim-screenshot.perf.txt"
 

@@ -7,8 +7,9 @@ namespace TempSim.Wpf;
 /// <summary>Strip chart of the last <see cref="WindowSeconds"/>: sensors, ControlTemp, plant, setpoint, bands, limits, relay lanes.</summary>
 public sealed class PlotView : FrameworkElement
 {
+    /// <summary>Status >= 10 is a fault (red shading); warning 6 (RunningOnTemp2) is shaded orange.</summary>
     public sealed record Sample(double T, double Plant, double Temp1, double Temp2, double Ctrl, double Setpoint,
-                                double HiBand, double LoBand, double HiLimit, double LoLimit, bool Heat, bool Cool, int Status);
+                                double HiBand, double LoBand, double HiLimit, double LoLimit, bool Heat, bool Cool, int Status, int Warning);
 
     readonly List<Sample> _samples = new();
     public double WindowSeconds { get; set; } = 120;
@@ -76,8 +77,8 @@ public sealed class PlotView : FrameworkElement
         {
             var a = view[i - 1]; var b = view[i];
             double x0 = X(a.T), x1 = Math.Max(X(b.T), x0 + 0.5);
-            if (b.Status == 6) dc.DrawRectangle(s_stopped, null, new Rect(x0, top, x1 - x0, plotH));
-            else if (b.Status == 7) dc.DrawRectangle(s_degraded, null, new Rect(x0, top, x1 - x0, plotH));
+            if (b.Status >= 10) dc.DrawRectangle(s_stopped, null, new Rect(x0, top, x1 - x0, plotH));
+            else if (b.Warning == 6) dc.DrawRectangle(s_degraded, null, new Rect(x0, top, x1 - x0, plotH));
             if (b.Heat) dc.DrawRectangle(s_heat, null, new Rect(x0, lane1, x1 - x0, laneH));
             if (b.Cool) dc.DrawRectangle(s_cool, null, new Rect(x0, lane2, x1 - x0, laneH));
         }

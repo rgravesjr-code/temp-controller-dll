@@ -1,0 +1,7 @@
+TempCtl v3.0.0 (Amendment A applied) unit tests on the Raspberry Pi bench (pi-engine, aarch64), 2026-09-18
+build\linux-arm64\test_tempctl (zig cc -target aarch64-linux-gnu.2.24), copied to /tmp and run bare:
+
+Linux pi-engine 6.18.34+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.18.34-1+rpt1 (2026-06-09) aarch64 GNU/Linux
+
+TempCtl 3.0.0 unit tests: 1516 passed, 0 failed
+exit code 0

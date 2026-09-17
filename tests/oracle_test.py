@@ -1,15 +1,17 @@
 """
-oracle_test.py - TempCtl v2 end-to-end cross-check with independent implementations.
+oracle_test.py - TempCtl v3 end-to-end cross-check with independent implementations.
 
-  * tempctl.dll   TcStep through ctypes: a scripted scenario (warm-up, setpoint
-                  step, sensor failure with failover, feedback fault) checked
-                  against expectations derived from the spec in tempctl.h.
-  * cantp.dll     the vendored CanTp packs every tick's output array with the
-                  tables from dbc/tables (generated from dbc/tempctl.dbc).
+  * tempctl.dll   TcInit / TcCheckTemp / TcReset / TcGetDiag through ctypes: a
+                  scripted scenario (heat-up, at-setpoint release, sensor 1 open
+                  with failover to sensor 2, reset, relay feedback fault, Temp2
+                  disabled) checked against expectations from TEMPCTL-SPEC-v3.0.0.
+  * cantp.dll     the vendored CanTp packs every tick's 25-value diagnostics
+                  array (TcGetDiag) with the tables from dbc/tables (generated
+                  from dbc/tempctl.dbc).
   * cantools      encodes the same physical values with dbc/tempctl.dbc; the
-                  50-byte payload must match CanTp's reassembled BAM byte for
-                  byte, and cantools' decode of CanTp's payload must equal
-                  CanTp_Unpack's values.
+                  payload must match CanTp's reassembled BAM bit for bit, and
+                  cantools' decode of CanTp's payload must equal CanTp_Unpack's
+                  values.
 
 Usage:  python tests\oracle_test.py [--tempctl build\win-x64\tempctl.dll] [--cantp third_party\cantp\cantp.dll] [--pylibs DIR]
 Needs cantools (pip install cantools, or --pylibs pointing at a `pip install --target` dir).
@@ -31,26 +33,39 @@ import cantools
 
 # ---------------------------------------------------------------- libraries
 tc = C.CDLL(os.path.abspath(args.tempctl))
-tc.TcVersion.restype = C.c_uint32
-tc.TcStep.argtypes = [C.c_int32, C.c_int32, C.c_uint32, C.POINTER(C.c_float), C.c_int32, C.POINTER(C.c_float), C.c_int32]
-tc.TcStep.restype = C.c_int32
-tc.TcSignalCount.restype = C.c_int32
-tc.TcInputCount.restype = C.c_int32
+I32P = C.POINTER(C.c_int32)
+tc.TcVersion.restype = C.c_int32
+tc.TcSetupCount.restype = C.c_int32
+tc.TcDiagCount.restype = C.c_int32
+tc.TcInit.argtypes = [C.c_int32, C.c_uint32, C.POINTER(C.c_double), C.c_int32, I32P, I32P]
+tc.TcCheckTemp.argtypes = [C.c_int32, C.c_uint32, C.c_double, C.c_double, C.c_int32, C.c_int32, I32P, I32P, I32P, I32P]
+tc.TcReset.argtypes = [C.c_int32, C.c_uint32, I32P, I32P]
+tc.TcGetDiag.argtypes = [C.c_int32, C.POINTER(C.c_double), C.c_int32]
+for f in (tc.TcInit, tc.TcCheckTemp, tc.TcReset, tc.TcGetDiag): f.restype = C.c_int32
 
 cp = C.CDLL(os.path.abspath(args.cantp))
 cp.CanTp_Version.restype = C.c_uint32
 cp.CanTp_Define.argtypes = [C.c_int32, C.POINTER(C.c_double), C.c_int32, C.POINTER(C.c_double), C.c_int32]
 cp.CanTp_OutputSize.argtypes = [C.c_int32]
-cp.CanTp_PackSgl.argtypes = [C.c_int32, C.POINTER(C.c_float), C.c_int32, C.c_uint64, C.c_uint64, C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_int32)]
-cp.CanTp_Unpack.argtypes = [C.c_int32, C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_double), C.c_int32, C.POINTER(C.c_int32)]
-for f in (cp.CanTp_Define, cp.CanTp_OutputSize, cp.CanTp_PackSgl, cp.CanTp_Unpack): f.restype = C.c_int32
+cp.CanTp_Pack.argtypes = [C.c_int32, C.POINTER(C.c_double), C.c_int32, C.c_uint64, C.c_uint64, C.POINTER(C.c_uint8), C.c_int32, I32P]
+cp.CanTp_Unpack.argtypes = [C.c_int32, C.POINTER(C.c_uint8), C.c_int32, C.POINTER(C.c_double), C.c_int32, I32P]
+for f in (cp.CanTp_Define, cp.CanTp_OutputSize, cp.CanTp_Pack, cp.CanTp_Unpack): f.restype = C.c_int32
 
-N_IN, N_OUT = tc.TcInputCount(), tc.TcSignalCount()
-INIT, STEP, RESET = 0, 1, 2
-(SETPOINT, DB_HI, DB_LO, HI_LIMIT, LO_LIMIT, ERR_TO, DB_TO, FILTER, T2_EN, T2_TOL, FB_EN,
- TEMP1, TEMP2, HTR_FB, CLR_FB, HEAT_CMD, COOL_CMD, ERR_STATUS, TEMP_STATUS, CTRL_TEMP,
- T1_FILT, T2_FILT, HI_BAND, LO_BAND, ERR_REMAIN, DB_REMAIN, ACTIVE) = range(27)
-assert (N_IN, N_OUT) == (17, 27), (N_IN, N_OUT)
+N_SETUP, N_DIAG = tc.TcSetupCount(), tc.TcDiagCount()
+assert (N_SETUP, N_DIAG) == (17, 25), (N_SETUP, N_DIAG)
+assert tc.TcVersion() >> 16 == 3, hex(tc.TcVersion())
+
+# setup indexes (TC_SETUP_*)
+(ENABLE, UNITS, SETPOINT, DB_HI, DB_LO, HI_LIMIT, LO_LIMIT, ERR_TO, DB_TO, ASP_TO,
+ T2_EN, T2_OFF, T2_TOL, CMP_TO, FILTER, FB_EN, FB_TO) = range(17)
+# diag indexes (TC_DIAG_*)
+(D_CTRL, D_ACTIVE, D_T1RAW, D_T2RAW, D_T2CORR, D_T1AVG, D_T2AVG, D_HIBAND, D_LOBAND, D_HCFLAG,
+ D_DB_REM, D_ASP_REM, D_CMP_REM, D_HFB_REM, D_CFB_REM, D_T1ACC, D_T2ACC, D_T1EV, D_T2EV,
+ D_STATUS, D_WARNING, D_DOHEAT, D_DOCOOL, D_FILTER, D_INIT) = range(25)
+# status / warning codes
+ST_DISABLED, ST_AT_SETPT, ST_HEATER_ON, ST_COOLER_ON, ST_HEAT_PENDING, ST_COOL_PENDING = 0, 1, 2, 3, 4, 5
+ST_T1_FAIL_HIGH, ST_BOTH_FAILED, ST_HEATER_FB_FAULT = 10, 12, 15
+WN_NONE, WN_T1_OOR, WN_HEATER_FB, WN_RUNNING_ON_T2 = 0, 1, 3, 6
 
 fails = 0
 def check(cond, msg):
@@ -67,7 +82,7 @@ sigdefs = (C.c_double * (8 * len(sigrows)))(*[v for row in sigrows for v in row]
 SLOT = 0
 rc = cp.CanTp_Define(SLOT, msgdef, 8, sigdefs, len(sigrows))
 check(rc == 0, f'CanTp_Define rc={rc}')
-check(len(sigrows) == N_OUT, f'table has {len(sigrows)} signals, controller has {N_OUT}')
+check(len(sigrows) == N_DIAG, f'table has {len(sigrows)} signals, controller has {N_DIAG} diagnostics')
 OUT_SIZE = cp.CanTp_OutputSize(SLOT)
 db = cantools.database.load_file(args.dbc, strict=True)
 msg = db.get_message_by_name('TempCtl')
@@ -111,18 +126,18 @@ def na_pattern_ok(payload, sig):
 # ---------------------------------------------------------------- one tick: controller -> CanTp -> oracle
 outbuf = (C.c_uint8 * OUT_SIZE)()
 written = C.c_int32()
-unpacked = (C.c_double * N_OUT)()
+unpacked = (C.c_double * N_DIAG)()
 consumed = C.c_int32()
 ticks_checked = 0
 
-def pack_and_compare(out):
+def pack_and_compare(diag):
     global ticks_checked
-    rc = cp.CanTp_PackSgl(SLOT, out, N_OUT, 0, 0, outbuf, OUT_SIZE, C.byref(written))
-    check(rc == 0 and written.value == OUT_SIZE, f'PackSgl rc={rc} written={written.value}')
+    rc = cp.CanTp_Pack(SLOT, diag, N_DIAG, 0, 0, outbuf, OUT_SIZE, C.byref(written))
+    check(rc == 0 and written.value == OUT_SIZE, f'Pack rc={rc} written={written.value}')
     payload, ids = reassemble_bam(bytes(outbuf))
     check(len(payload) == PAYLOAD_LEN, f'payload {len(payload)} != {PAYLOAD_LEN}')
     check(ids[0] == 0x1CECFFFE and all(i == 0x1CEBFFFE for i in ids[1:]), f'ids {[hex(i) for i in ids]}')
-    values = list(out)
+    values = list(diag)
     expect = msg.encode(phys_to_cantools(values), scaling=True, padding=False, strict=True)
     # Compare only bits that carry a signal value: CanTp fills unused bits with the J1939 pad (1s)
     # where cantools leaves 0s, and NaN signals are packed as all ones (checked separately).
@@ -136,7 +151,7 @@ def pack_and_compare(out):
     exp = bytes(e & m for e, m in zip(expect, mask))
     check(got == exp, f'payload differs from cantools\n  cantp   {payload.hex()}\n  cantools{expect.hex()}')
     # decode side: cantools decode of CanTp's bytes == CanTp_Unpack
-    rc = cp.CanTp_Unpack(SLOT, outbuf, OUT_SIZE, unpacked, N_OUT, C.byref(consumed))
+    rc = cp.CanTp_Unpack(SLOT, outbuf, OUT_SIZE, unpacked, N_DIAG, C.byref(consumed))
     check(rc == 1 and consumed.value == OUT_SIZE, f'Unpack rc={rc}')
     dec = msg.decode(payload, decode_choices=False, scaling=True)
     for s, u in zip(msg.signals, unpacked):
@@ -145,51 +160,92 @@ def pack_and_compare(out):
     return payload
 
 # ---------------------------------------------------------------- scenario
-sig = (C.c_float * N_OUT)()
-out = (C.c_float * N_OUT)()
-def set_cfg(**kw):
-    for k, v in kw.items(): sig[globals()[k]] = v
-set_cfg(SETPOINT=50, DB_HI=5, DB_LO=5, HI_LIMIT=90, LO_LIMIT=10, ERR_TO=2000, DB_TO=500,
-        FILTER=4, T2_EN=1, T2_TOL=4, FB_EN=1, TEMP1=20, TEMP2=20.5)
-def step(ms, action=STEP, **kw):
-    set_cfg(**kw)
-    rc = tc.TcStep(0, action, ms, sig, N_IN, out, N_OUT)
-    check(rc >= 0, f'TcStep rc={rc} at {ms}')
-    pack_and_compare(out)
+setup = (C.c_double * N_SETUP)()
+diag = (C.c_double * N_DIAG)()
+st, wn, dh, dc = C.c_int32(), C.c_int32(), C.c_int32(), C.c_int32()
+ZONE = 0
+
+def set_setup(**kw):
+    for k, v in kw.items(): setup[globals()[k]] = v
+set_setup(ENABLE=1, UNITS=1, SETPOINT=50, DB_HI=5, DB_LO=5, HI_LIMIT=90, LO_LIMIT=10, ERR_TO=2000, DB_TO=500, ASP_TO=1000,
+          T2_EN=1, T2_OFF=0.5, T2_TOL=4, CMP_TO=5000, FILTER=4, FB_EN=1, FB_TO=1000)
+
+def init(ms):
+    rc = tc.TcInit(ZONE, ms, setup, N_SETUP, C.byref(st), C.byref(wn))
+    check(rc == 0, f'TcInit rc={rc}')
+    get_diag()
+
+def get_diag():
+    rc = tc.TcGetDiag(ZONE, diag, N_DIAG)
+    check(rc == 0, f'TcGetDiag rc={rc}')
+    pack_and_compare(diag)
+
+def tick(ms, t1, t2, hfb, cfb):
+    rc = tc.TcCheckTemp(ZONE, ms, t1, t2, hfb, cfb, C.byref(dh), C.byref(dc), C.byref(st), C.byref(wn))
+    check(rc == 0, f'TcCheckTemp rc={rc} at {ms}')
+    get_diag()
+    check(diag[D_STATUS] == st.value and diag[D_WARNING] == wn.value and diag[D_DOHEAT] == dh.value and diag[D_DOCOOL] == dc.value,
+          f'diag mirrors differ from the outputs at {ms}')
     return rc
 
-step(0, INIT)
-check(out[ACTIVE] == 1 and out[TEMP_STATUS] == 8, 'init: sensor 1, filter warm-up')
-# toy plant with honest relay feedback
+init(0)
+check(st.value == ST_AT_SETPT and wn.value == WN_NONE and diag[D_INIT] == 1 and diag[D_ACTIVE] == 1, 'init: idle, sensor 1')
+check(math.isnan(diag[D_CTRL]) and math.isnan(diag[D_T1RAW]), 'init: no readings yet')
+
+# toy plant with honest relay feedback (the DO answers the previous command)
 temp, dt = 20.0, 0.1
 heat = cool = 0
+saw_heat_pending = saw_heater_on = saw_at_setpt = False
 for i in range(1, 1201):                                      # 120 s
     ms = i * 100
-    # relays answer the previous command
-    set_cfg(HTR_FB=heat, CLR_FB=cool)
     fail_t1 = 600 <= i < 700                                  # 10 s open sensor 1
-    step(ms, TEMP1=(float('nan') if fail_t1 else temp + 0.3), TEMP2=temp - 0.2)
-    heat, cool = int(out[HEAT_CMD]), int(out[COOL_CMD])
-    temp += dt * (0.02 * (20.0 - temp) + 6.0 * heat - 6.0 * cool)
-    if i == 40:  check(out[TEMP_STATUS] in (1, 2), f'heat pending/heating after warm-up, got {out[TEMP_STATUS]}')
-    if i == 300: check(abs(out[CTRL_TEMP] - 50) < 6, f'near setpoint at 30 s: {out[CTRL_TEMP]}')
-    if i == 605: check(out[HEAT_CMD] == 0 and out[COOL_CMD] == 0 and out[TEMP_STATUS] == 5, 'relays off, error pending on open sensor')
-    if i == 625: check(int(out[ERR_STATUS]) & 4 and out[ACTIVE] == 2 and out[TEMP_STATUS] == 7, f'failover to sensor 2 after 2 s: err={int(out[ERR_STATUS])} active={out[ACTIVE]} st={out[TEMP_STATUS]}')
-    if i == 800: check(out[ACTIVE] == 2 and int(out[ERR_STATUS]) == 4, 'sensor 1 stays failed (latched)')
-step(120200, RESET)
-check(out[ACTIVE] == 1 and int(out[ERR_STATUS]) == 0, 'reset clears the failed sensor')
-# feedback fault: heater stuck off while commanded on
-set_cfg(SETPOINT=80, HTR_FB=0)
+    t1 = float('nan') if fail_t1 else temp + 0.3
+    t2 = temp - 0.2                                           # + Temp2Offset 0.5 = temp + 0.3, so the two agree
+    tick(ms, t1, t2, heat, cool)
+    heat, cool = dh.value, dc.value
+    temp += dt * (0.02 * (20.0 - temp) + 2.0 * heat - 2.0 * cool)   # 2 deg/s: the 1 s at-setpoint hold overshoots by 2, inside the 5 deg band
+    saw_heat_pending |= st.value == ST_HEAT_PENDING
+    saw_heater_on |= st.value == ST_HEATER_ON
+    saw_at_setpt |= st.value == ST_AT_SETPT and i > 1
+    if i == 1:   check(st.value == ST_HEAT_PENDING and dh.value == 0 and diag[D_DB_REM] == 500, f'tick 1: heat pending, got st={st.value} rem={diag[D_DB_REM]}')
+    if i == 6:   check(st.value == ST_HEATER_ON and dh.value == 1, f'tick 6: heater on after 500 ms, got st={st.value}')
+    if i == 300: check(abs(diag[D_CTRL] - 50) < 6, f'near setpoint at 30 s: {diag[D_CTRL]}')
+    if i == 599: check(st.value < 10 and wn.value == WN_NONE and diag[D_HCFLAG] == 1, f'healthy before the open sensor: st={st.value} wn={wn.value}')
+    if i == 605: check(st.value < 10 and wn.value == WN_T1_OOR and diag[D_T1ACC] == 600 and math.isnan(diag[D_CTRL]), f'open sensor: warning 1, accumulator 600 after 6 ticks, got wn={wn.value} acc={diag[D_T1ACC]}')
+    if i == 618: check(diag[D_ACTIVE] == 1 and st.value < 10 and diag[D_T1ACC] == 1900, 'still on sensor 1 one tick before ErrorTimeout')
+    if i == 619: check(diag[D_ACTIVE] == 2 and st.value < 10 and diag[D_T1ACC] == 2000, f'failover to sensor 2 at 2 s: active={diag[D_ACTIVE]} st={st.value}')
+    if i == 700: check(wn.value == WN_RUNNING_ON_T2 and diag[D_ACTIVE] == 2, f'sensor 1 back in range: warning 6, still on sensor 2: wn={wn.value}')
+    if i == 800: check(diag[D_ACTIVE] == 2 and st.value < 10 and abs(diag[D_CTRL] - (t2 + 0.5)) < 1e-9, 'control on corrected sensor 2, no fault')
+check(saw_heat_pending and saw_heater_on and saw_at_setpt, 'the run went through HeatPending, HeaterON and TempAtSetPt')
+
+rc = tc.TcReset(ZONE, 120100, C.byref(st), C.byref(wn)); check(rc == 0, 'TcReset rc')
+get_diag()
+check(diag[D_ACTIVE] == 1 and wn.value == WN_NONE and diag[D_T1ACC] == 0 and diag[D_HCFLAG] == 0 and math.isnan(diag[D_T1AVG]), 'reset restores sensor 1, clears history')
+
+# relay feedback fault: heater DO stuck off while commanded on
+set_setup(SETPOINT=80)
+init(120100)                                                  # re-Init: relays were off (Reset), so both start off
 for i in range(1, 60):
-    step(120200 + i * 100, TEMP1=temp, TEMP2=temp)
-    if i == 8:  check(out[HEAT_CMD] == 1, 'heating commanded')
-    if i == 20: check(out[TEMP_STATUS] == 5, 'feedback mismatch pending')
-check(int(out[ERR_STATUS]) & 0x80 and out[HEAT_CMD] == 1, f'heater feedback bit latched, operation continues: {int(out[ERR_STATUS])}')
-# Temp2 disabled -> Temp2Filtered NaN -> packed as not available
-step(130000, T2_EN=0)
-check(math.isnan(out[T2_FILT]), 'Temp2Filtered NaN when disabled')
+    ms = 120100 + i * 100
+    tick(ms, temp + 0.3, temp - 0.2, 0, 0)
+    if i == 6:  check(dh.value == 1 and st.value == ST_HEATER_ON, f'heating commanded at tick 6: st={st.value}')
+    if i == 7:  check(wn.value == WN_HEATER_FB and diag[D_HFB_REM] == 1000 and dh.value == 1, f'feedback mismatch warning at once: wn={wn.value} rem={diag[D_HFB_REM]}')
+    if i == 16: check(st.value == ST_HEATER_ON and diag[D_HFB_REM] == 100, f'one tick before the feedback fault: st={st.value} rem={diag[D_HFB_REM]}')
+    if i == 17: check(st.value == ST_HEATER_FB_FAULT and dh.value == 0 and dc.value == 0 and wn.value == WN_HEATER_FB, f'heater feedback fault after 1000 ms: st={st.value}')
+    if i == 17: frozen = list(diag)
+    if i == 30: check(st.value == ST_HEATER_FB_FAULT and list(diag) == frozen, 'latched, diagnostics frozen since the fault tick')
+
+# single-sensor mode: sensor 1 open -> Temp1FailHigh; Temp2 fields not available on the wire
+set_setup(T2_EN=0, SETPOINT=50, FB_EN=0)
+init(130000)
+check(st.value == ST_AT_SETPT, 'Init after a fault clears it')
+for i in range(1, 25):
+    tick(130000 + i * 100, float('nan') if i > 3 else 50.0, 123.0, 0, 0)
+    check(math.isnan(diag[D_T2RAW]) and math.isnan(diag[D_T2CORR]) and math.isnan(diag[D_T2AVG]), 'Temp2 fields NaN when disabled')
+    if i == 22: check(st.value == ST_AT_SETPT, 'still a state one tick before')
+    if i == 23: check(st.value == ST_T1_FAIL_HIGH and wn.value == WN_T1_OOR, f'single sensor NaN stream -> Temp1FailHigh after 2000 ms: st={st.value}')
 
 print(f'tempctl {tc.TcVersion():#x}, cantp {cp.CanTp_Version():#x}, cantools {cantools.__version__}: '
-      f'{ticks_checked} ticks packed and compared bit-for-bit, {PAYLOAD_LEN}-byte BAM of {OUT_SIZE // 24} frames')
+      f'{ticks_checked} diagnostics arrays packed and compared bit-for-bit, {PAYLOAD_LEN}-byte BAM of {OUT_SIZE // 24} frames')
 print('ALL OK' if fails == 0 else f'{fails} FAILURE(S)')
 sys.exit(1 if fails else 0)

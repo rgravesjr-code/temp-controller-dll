@@ -1,13 +1,17 @@
-# TempCtl — Distribution Package v2.0.3
+# TempCtl - Distribution Package v3.0.0
 
-Temperature controller for LabVIEW (Call Library Function Node) as a Windows
-DLL and Linux shared libraries, with its J1939 CAN message defined in a DBC
-and transported by the separate **CanTp** library (the subset TempCtl needs
-is included, unmodified).
+Deadband temperature controller with sensor validation for LabVIEW (Call
+Library Function Node) as a Windows DLL and Linux shared libraries. v3.0.0
+is the API and behaviour revision decided with the system owner
+(`TEMPCTL-SPEC-v3.0.0.md`, `TEMPCTL-CAPABILITY-v3.0.0.md`): `TcInit` /
+`TcCheckTemp` / `TcReset` / `TcGetDiag` replace the single `TcStep` of v2.
 
-The closed-loop simulator **TempSim** is a separate package
-(`TempSim_v1.0.0_win-x64.zip`, `_linux-x64.zip`, `_linux-arm64.zip`); it is
-not needed to use the controller.
+The controller does no CAN. Its 25-value diagnostics array is defined as a
+J1939 message in a DBC and can be transported by the separate **CanTp**
+library (the subset TempCtl needs is included, unmodified). The closed-loop
+simulator **TempSim** is a separate package (`TempSim_v2.0.0_win-x64.zip`,
+`_linux-x64.zip`, `_linux-arm64.zip`); it is not needed to use the
+controller.
 
 ## Files in this package
 
@@ -17,34 +21,34 @@ not needed to use the controller.
 | `x86\tempctl.dll`, `x86\tempctl.lib` | The same library built **x86** for 32-bit LabVIEW |
 | `linux-x64\libtempctl.so` | **NI Linux RT x86_64** (cRIO-904x/905x/906x, incl. cRIO-9045) |
 | `linux-arm64\libtempctl.so` | **aarch64 Linux** (Raspberry Pi 4/5) |
-| `linux-*\test_tempctl`, `test_tempctl.exe`, `x86\test_tempctl.exe` | Release-gate test for each target (`181 passed, 0 failed`) |
-| `tempctl.h` | C header, one header for every build (the behavioural spec is in its comments) |
-| `third_party\cantp\` | **CanTp v1.3.1**, the subset TempCtl needs, unmodified: `cantp.h`, `cantp.dll` (x64, `x86\`), `libcantp.so` (`linux-x64\`, `linux-arm64\`, `linux-armhf\`), `tools\dbc2tables.py`, `LICENSE.txt`. `VENDORED.txt` has the version, the zip hash and the dependency rule (minimum CanTp 1.0.0). CanTp's guides, source, tests and `test_cantp` are in the CanTp package |
-| `dbc\tempctl.dbc` | The controller message: PGN 65280, 27 signals in `TcStep` output order, J1939 BAM |
-| `dbc\tables\TempCtl.*.csv`, `.json`, `cantp_tables.h` | The same message as CanTp tables: CSV for LabVIEW (`Read Delimited Spreadsheet` → `CanTp_Define`), JSON (what the simulator loads), C header |
-| `TESTLOG.txt` | Windows gates, DBC check and the Python oracle, captured at package time |
+| `linux-*\test_tempctl`, `test_tempctl.exe`, `x86\test_tempctl.exe` | Release-gate test for each target (`1516 passed, 0 failed`) |
+| `tempctl.h` | C header for the LabVIEW Import Shared Library wizard. The same file for the Windows `.dll` and the cRIO `.so` (fixed-width integers and `double` only), so one set of wrapper VIs serves both; a second copy sits under `src\` |
+| `third_party\cantp\` | **CanTp v1.3.1**, the subset TempCtl needs, unmodified: `cantp.h`, `cantp.dll` (x64, `x86\`), `libcantp.so` (`linux-x64\`, `linux-arm64\`, `linux-armhf\`), `tools\dbc2tables.py`, `LICENSE.txt`. `VENDORED.txt` has the version, the zip hash and the dependency rule (minimum CanTp 1.0.0) |
+| `dbc\tempctl.dbc` | The diagnostics message: PGN 65280, 25 signals in `TcGetDiag` order, 55 bytes, J1939 BAM, with status and warning value tables |
+| `dbc\tables\TempCtl.*.csv`, `.json`, `cantp_tables.h` | The same message as CanTp tables: CSV for LabVIEW (`Read Delimited Spreadsheet` -> `CanTp_Define`), JSON (what the simulator loads), C header |
+| `TESTLOG.txt` | Windows gates, DBC check, Python oracle and the Raspberry Pi run, captured at package time |
 | `DEPENDENCIES.txt` | Import report of the native libraries (no VC runtime; .so on libc only) |
 | `MANIFEST.txt` | File list with SHA-256 hashes |
-| `TEMPCTL_PACKAGE_GUIDE.md` | **API reference**: `TcStep` parameters, the 27-signal array, status/error codes, semantics |
-| `LABVIEW_INTEGRATION.md` | CLFN settings, RT loop sketch with CanTp, cRIO/Pi deployment, troubleshooting |
-| `TEMPCTL-SPEC-v2.0.1.md` | The controller requirements as implemented (R-numbered, sent for markup 2026-09-14) |
+| `TEMPCTL_PACKAGE_GUIDE.md` | **API reference**: the four calls with CLFN tables, setup and diagnostics indexes, status and warning codes |
+| `LABVIEW_INTEGRATION.md` | Import wizard notes, CLFN settings, RT loop sketch with CanTp, the `RelayFeedbackTimeout` latency rule, the leaky accumulator, deployment, troubleshooting |
+| `TEMPCTL-SPEC-v3.0.0.md` | The controller requirements as implemented (R-numbered, with the implementation decisions listed for markup) |
+| `TEMPCTL-CAPABILITY-v3.0.0.md` | The operating rules in prose (the capability document) |
 | `TESTING.md` | What the gates cover and how to re-run them |
 | `CHANGELOG.md`, `LICENSE.txt` | Release history, MIT license |
-| `examples\oracle_test.py` | ctypes example of the full chain: `TcStep` → `CanTp_PackSgl` → frames → `CanTp_Unpack`, checked against cantools |
+| `examples\oracle_test.py` | ctypes example of the full chain: `TcInit` / `TcCheckTemp` / `TcGetDiag` -> `CanTp_Pack` -> frames -> `CanTp_Unpack`, checked against cantools |
 | `tools\make_tempctl_dbc.py` | Generator of `tempctl.dbc` (the only place the message layout is defined) |
 | `tools\elfinfo.py` | ELF inspector used for `DEPENDENCIES.txt` |
 | `src\` | Complete C source, the test program and the build script |
 
 No runtime dependencies: the DLLs link the CRT statically and import only
-`KERNEL32.dll`; the `.so` files import only `memcpy`/`memset` from libc
-(GLIBC 2.14 symbols).
+`KERNEL32.dll`; the `.so` files import only `memset` from libc.
 
 ## Quick start
 
 **Verify on your machine**
 
 ```bat
-test_tempctl.exe                      -> 181 passed, 0 failed
+test_tempctl.exe                      -> TempCtl 3.0.0 unit tests: 1516 passed, 0 failed
 ```
 
 **cRIO-9045 (x86_64)**
@@ -59,42 +63,57 @@ ssh admin@<crio-ip> "chmod 755 /usr/local/lib/lib*.so /home/admin/test_tempctl &
 package's `linux-arm64` console simulator runs there directly and can put
 the frames on a real CAN bus.
 
-## The one controller function
+## The controller calls
 
 ```c
-int32_t TcStep(int32_t zone, int32_t action, uint32_t nowMs,
-               const float* in, int32_t inLen, float* out, int32_t outLen);
+int32_t TcInit(int32_t zone, uint32_t nowMs, const double* setupArray, int32_t setupLen,
+               int32_t* status, int32_t* warning);                       /* setup: 17 DBL, once per zone + on change */
+int32_t TcCheckTemp(int32_t zone, uint32_t nowMs, double temp1, double temp2,
+                    int32_t diHeaterFB, int32_t diCoolerFB,
+                    int32_t* doHeater, int32_t* doCooler, int32_t* status, int32_t* warning);   /* every pass */
+int32_t TcReset(int32_t zone, uint32_t nowMs, int32_t* status, int32_t* warning);
+int32_t TcGetDiag(int32_t zone, double* diagArray, int32_t diagLen);     /* 25 DBL, read-only */
 ```
 
-`action` 0 Init / 1 Step / 2 Reset; `nowMs` = Tick Count (ms); `in` 17 SGL
-(configuration, measurements, initial relay state); `out` 27 SGL (echo of the
-inputs with the relay commands, then ErrorStatus, TempStatus, ControlTemp,
-filtered temperatures, bands, countdowns, active sensor). Full table in
-`TEMPCTL_PACKAGE_GUIDE.md`.
+`status` 0..5 are states (`TempCtrlDisabled`, `TempAtSetPt`, `HeaterON`,
+`CoolerON`, `HeatPending`, `CoolPending`), 10..16 are faults (`Temp1FailHigh`,
+`Temp1FailLow`, `BothSensorsFailed`, `TempDisagreeFault`, `ConfigFault`,
+`HeaterFBFault`, `CoolerFBFault`); `warning` 0..7 is the lowest active
+warning. Full tables in `TEMPCTL_PACKAGE_GUIDE.md`.
 
-Sending the state on CAN is two CanTp calls: `CanTp_Define(slot, msg, 8,
-sig, 27)` once with the tables from `dbc\tables\`, then `CanTp_PackSgl(slot,
-out, 27, ts, spacing, frames, cap, &written)` every tick → 9 NI-XNET raw
-frame records (one J1939 BAM) for XNET Write. `CanTp_Unpack` / `CanTp_RxFeed`
-do the reverse on the receiving side. The CanTp package guide has the CLFN
-tables; the LabVIEW side may also use `CanTp_TransferXnet` (CanTp ≥ 1.3.0)
-to unflatten straight into XNET Write.
+Sending the diagnostics on CAN is two CanTp calls: `CanTp_Define(slot, msg,
+8, sig, 25)` once with the tables from `dbc\tables\`, then `CanTp_Pack(slot,
+diag, 25, ts, spacing, frames, cap, &written)` -> 9 NI-XNET raw frame records
+(one J1939 BAM) for XNET Write. `CanTp_Unpack` / `CanTp_RxFeed` do the
+reverse on the receiving side.
 
 ## Design decisions in this release
 
-- **Pure controller.** No CAN, no hardware, no file I/O in `tempctl`. The
-  caller maps thermocouples and relays; the minimum system is one sensor and
-  the heater/cooler outputs.
-- **Deadbands are offsets** added to / subtracted from the setpoint.
-- **Second sensor is optional.** With it enabled the controller keeps running
-  on the surviving sensor when one fails (rationality check on each,
-  disagreement check between them); both failed → stopped. Failed sensors
-  stay failed until Reset (no flapping).
-- **Feedback faults set a bit and keep going** (Scott's D4); failed sensors
-  and feedback bits are latched until Reset (owner's defaults Q2/Q3).
-- **ErrorStatus is a bit mask**; the low three bits keep the v1 meaning for
-  a single-sensor system.
-- **Never a DBC inside a DLL.** The message is defined once
+- **No relay chatter (REQ-7).** Every relay transition is time-qualified:
+  `DeadbandTimeout` to engage, `AtSetPtTimeout` to release. A countdown
+  starts on the tick that first observes its condition and can expire only
+  on a later tick.
+- **Raw control, averaged comparison.** Limits and control act on the raw
+  readings; the moving averages exist only for the sensor-1-vs-sensor-2
+  comparison.
+- **Leaky accumulator.** Out-of-range time accumulates and in-range time
+  drains it at half rate (Amendment A of the handoff); a sensor fails when
+  the accumulator reaches `ErrorTimeout`. A flickering sensor that is out of
+  range more than a third of the time still fails (half the time: after
+  about 4 x `ErrorTimeout`); an isolated glitch drains away. `ErrorTimeout`
+  must be at least two loop periods.
+- **Control pauses while the active sensor is out of range**: relays hold,
+  countdowns freeze.
+- **Two sensors, offset-corrected**: one failure with a healthy partner is a
+  warning (`RunningOnTemp2`), not a fault; a sustained disagreement warns at
+  a tenth of `TempCompareTimeout` and faults at the full time.
+- **Per-relay DO feedback** with its own warning and fault; a one-pass
+  mismatch at every transition is expected DO-loop lag.
+- **Config check at Init**: `ConfigFault` (enabled) or `ConfigInvalid`
+  (disabled); only a passing Init clears `ConfigFault`.
+- **Faults are shutdown events**: relays off, status latched, warning and
+  diagnostics frozen, first fault wins, until Reset or Init.
+- **Never a DBC inside a DLL.** The diagnostics message is defined once
   (`tempctl.dbc`), converted to flat tables, loaded into CanTp with one call.
 - **Separate packages.** The controller (this package), the simulator
   (TempSim) and the transport (CanTp) are released on their own version
@@ -104,11 +123,17 @@ to unflatten straight into XNET Write.
 
 - The x86_64 `.so` was cross-compiled and inspected (ELF machine, exports,
   GLIBC needs) but **not executed on a cRIO** in this release; the identical
-  source was executed on the Raspberry Pi (aarch64) with the same 181 checks
-  and the same simulator outputs as Windows. Run `linux-x64\test_tempctl` on
-  the target as the first step.
-- CanTp transports used here: J1939 BAM. The controller message needs none
-  of CanTp's RTS/CTS, ISO-TP, CAN FD, ECD-cluster or XNET-frame features.
+  source was executed on the Raspberry Pi (aarch64) with the same 1516
+  checks and the same simulator outputs as Windows. Run `linux-x64\test_tempctl`
+  on the target as the first step.
+- The coverage gaps of the specification (section 11): a physically stuck
+  relay, a heater that never reaches the setpoint, a wrong-but-in-range
+  survivor after a failover, a single visible warning, no separate process
+  over-temperature limit.
+- The LabVIEW Import Shared Library wizard run is the LabVIEW side's
+  acceptance step; the header was written to its constraints but the wizard
+  itself was not run here.
+- CanTp transports used here: J1939 BAM only.
 
 ---
 

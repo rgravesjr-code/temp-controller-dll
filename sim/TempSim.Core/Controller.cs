@@ -3,64 +3,104 @@ using TempSim.Core.Native;
 namespace TempSim.Core;
 
 /// <summary>
-/// Typed wrapper around one TempCtl zone: fill <see cref="In"/>, call <see cref="Init"/>/<see cref="Step"/>/<see cref="Reset"/>,
-/// read <see cref="Out"/>. The arrays are exactly the SGL arrays TcStep sees.
+/// Typed wrapper around one TempCtl v3 zone: fill <see cref="Setup"/> (or <see cref="LoadSetup"/>), call
+/// <see cref="Init"/> / <see cref="CheckTemp"/> / <see cref="Reset"/>, read the outputs and <see cref="Diag"/>
+/// (refreshed with TcGetDiag after every call). The arrays are exactly what the library sees.
 /// </summary>
 public sealed class Controller
 {
     public int Zone { get; }
-    public float[] In { get; } = new float[TcConst.SignalCount];   // sized like Out so the same array could be used in place
-    public float[] Out { get; } = new float[TcConst.SignalCount];
+    public double[] Setup { get; } = new double[TcConst.SetupCount];
+    public double[] Diag { get; } = new double[TcConst.DiagCount];
     public int LastRc { get; private set; }
     public bool Initialized { get; private set; }
+    public TcStatus Status { get; private set; }
+    public TcWarning Warning { get; private set; }
+    public bool DoHeater { get; private set; }
+    public bool DoCooler { get; private set; }
 
     public Controller(int zone = 0)
     {
         NativeLoader.Register();
         Zone = zone;
-        if (TempCtlNative.TcSignalCount() != TcConst.SignalCount || TempCtlNative.TcInputCount() != TcConst.InputCount)
-            throw new InvalidOperationException("tempctl library signal layout does not match this simulator");
+        if (TempCtlNative.TcSetupCount() != TcConst.SetupCount || TempCtlNative.TcDiagCount() != TcConst.DiagCount)
+            throw new InvalidOperationException("tempctl library array sizes do not match this simulator");
+        if (TempCtlNative.TcVersion() >> 16 != 3)
+            throw new InvalidOperationException($"tempctl {NativeLoader.Describe()} is not a v3 library");
     }
 
-    public float this[TcSignal s] { get => Out[(int)s]; }
-    public void Set(TcSignal s, float v) => In[(int)s] = v;
-    public float Get(TcSignal s) => In[(int)s];
+    public double this[TcDiag d] => Diag[(int)d];
+    public void SetSetup(TcSetup s, double v) => Setup[(int)s] = v;
+    public double GetSetup(TcSetup s) => Setup[(int)s];
+    public void LoadSetup(SimConfig.ControllerConfig c) => c.ToSetupArray().CopyTo(Setup, 0);
 
-    public int Init(uint nowMs) { LastRc = Call(TcAction.Init, nowMs); Initialized = true; return LastRc; }
-    public int Reset(uint nowMs) { LastRc = Call(TcAction.Reset, nowMs); return LastRc; }
-    public int Step(uint nowMs)
+    /// <summary>TcInit: load / replace the setup (a running zone keeps its relays when the new setup is valid and enabled).</summary>
+    public int Init(uint nowMs)
     {
-        if (!Initialized) throw new InvalidOperationException("Init first");
-        LastRc = Call(TcAction.Step, nowMs);
+        LastRc = TempCtlNative.Init(Zone, nowMs, Setup, out int st, out int wn);
+        Check(LastRc, "TcInit");
+        Status = (TcStatus)st; Warning = (TcWarning)wn;
+        Initialized = true;
+        RefreshDiag();
         return LastRc;
     }
-    int Call(TcAction a, uint nowMs)
+
+    /// <summary>TcCheckTemp: one control tick.</summary>
+    public int CheckTemp(uint nowMs, double temp1, double temp2, bool heaterFb, bool coolerFb)
     {
-        int rc = TempCtlNative.Step(Zone, a, nowMs, In.AsSpan(0, TcConst.InputCount), Out);
-        if (rc < 0) throw new InvalidOperationException($"TcStep returned {rc}");
-        return rc;
+        LastRc = TempCtlNative.CheckTemp(Zone, nowMs, temp1, temp2, heaterFb ? 1 : 0, coolerFb ? 1 : 0,
+                                         out int dh, out int dc, out int st, out int wn);
+        Check(LastRc, "TcCheckTemp");
+        DoHeater = dh != 0; DoCooler = dc != 0; Status = (TcStatus)st; Warning = (TcWarning)wn;
+        RefreshDiag();
+        return LastRc;
     }
 
-    // ---- typed outputs ----
-    public bool HeatingCmd => Out[(int)TcSignal.HeatingCmd] > 0.5f;
-    public bool CoolingCmd => Out[(int)TcSignal.CoolingCmd] > 0.5f;
-    public TcErrorBits ErrorStatus => (TcErrorBits)(uint)Out[(int)TcSignal.ErrorStatus];
-    public TcTempStatus TempStatus => (TcTempStatus)(int)Out[(int)TcSignal.TempStatus];
-    public float ControlTemp => Out[(int)TcSignal.ControlTemp];
-    public float Temp1Filtered => Out[(int)TcSignal.Temp1Filtered];
-    public float Temp2Filtered => Out[(int)TcSignal.Temp2Filtered];
-    public float HiBand => Out[(int)TcSignal.HiBand];
-    public float LoBand => Out[(int)TcSignal.LoBand];
-    public float ErrorRemainMs => Out[(int)TcSignal.ErrorRemainMs];
-    public float DbRemainMs => Out[(int)TcSignal.DbRemainMs];
-    public int ActiveSensor => (int)Out[(int)TcSignal.ActiveSensor];
-
-    public static string Describe(TcErrorBits bits)
+    /// <summary>TcReset: clear faults and history, keep the setup, relays off.</summary>
+    public int Reset(uint nowMs)
     {
-        if (bits == TcErrorBits.None) return "none";
-        var parts = new List<string>();
-        foreach (TcErrorBits b in Enum.GetValues<TcErrorBits>())
-            if (b != TcErrorBits.None && bits.HasFlag(b)) parts.Add(b.ToString());
-        return string.Join("|", parts);
+        LastRc = TempCtlNative.Reset(Zone, nowMs, out int st, out int wn);
+        Check(LastRc, "TcReset");
+        Status = (TcStatus)st; Warning = (TcWarning)wn;
+        RefreshDiag();
+        return LastRc;
     }
+
+    /// <summary>TcGetDiag into <see cref="Diag"/>; the relay mirrors become <see cref="DoHeater"/> / <see cref="DoCooler"/>.</summary>
+    public void RefreshDiag()
+    {
+        int rc = TempCtlNative.GetDiag(Zone, Diag);
+        Check(rc, "TcGetDiag");
+        DoHeater = Diag[(int)TcDiag.DoHeaterMirror] > 0.5;
+        DoCooler = Diag[(int)TcDiag.DoCoolerMirror] > 0.5;
+    }
+
+    static void Check(int rc, string call) { if (rc < 0) throw new InvalidOperationException($"{call} returned {rc}"); }
+
+    // ---- typed diagnostics ----
+    public bool IsFault => TcConst.IsFault(Status);
+    public double ControlTemp => Diag[(int)TcDiag.ControlTemp];
+    public int ActiveSensor => (int)Diag[(int)TcDiag.ActiveSensor];
+    public double Temp1Raw => Diag[(int)TcDiag.Temp1Raw];
+    public double Temp2Raw => Diag[(int)TcDiag.Temp2Raw];
+    public double Temp2Corrected => Diag[(int)TcDiag.Temp2Corrected];
+    public double Temp1Avg => Diag[(int)TcDiag.Temp1Avg];
+    public double Temp2Avg => Diag[(int)TcDiag.Temp2Avg];
+    public double HiBand => Diag[(int)TcDiag.HiBand];
+    public double LoBand => Diag[(int)TcDiag.LoBand];
+    public bool InitialHcFlag => Diag[(int)TcDiag.InitialHcFlag] > 0.5;
+    public double DeadbandRemainMs => Diag[(int)TcDiag.DeadbandRemainMs];
+    public double AtSetPtRemainMs => Diag[(int)TcDiag.AtSetPtRemainMs];
+    public double CompareRemainMs => Diag[(int)TcDiag.CompareRemainMs];
+    public double HeaterFbRemainMs => Diag[(int)TcDiag.HeaterFbRemainMs];
+    public double CoolerFbRemainMs => Diag[(int)TcDiag.CoolerFbRemainMs];
+    public double Temp1OorAccumMs => Diag[(int)TcDiag.Temp1OorAccumMs];
+    public double Temp2OorAccumMs => Diag[(int)TcDiag.Temp2OorAccumMs];
+    public int Temp1OorEventsPerHour => (int)Diag[(int)TcDiag.Temp1OorEventsPerHour];
+    public int Temp2OorEventsPerHour => (int)Diag[(int)TcDiag.Temp2OorEventsPerHour];
+    public int AppliedFilterPoints => (int)Diag[(int)TcDiag.AppliedFilterPoints];
+    public bool ZoneInitialized => Diag[(int)TcDiag.ZoneInitialized] > 0.5;
+
+    public static string Describe(TcStatus s) => $"{TcConst.Name(s)} ({(int)s})";
+    public static string Describe(TcWarning w) => $"{TcConst.Name(w)} ({(int)w})";
 }

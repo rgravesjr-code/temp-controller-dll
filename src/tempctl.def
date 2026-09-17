@@ -1,6 +1,9 @@
 LIBRARY tempctl
 EXPORTS
     TcVersion
-    TcInputCount
-    TcSignalCount
-    TcStep
+    TcSetupCount
+    TcDiagCount
+    TcInit
+    TcCheckTemp
+    TcReset
+    TcGetDiag

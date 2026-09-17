@@ -2,56 +2,93 @@ using System.Runtime.InteropServices;
 
 namespace TempSim.Core.Native;
 
-/// <summary>P/Invoke surface of tempctl.dll / libtempctl.so (src/tempctl.h).</summary>
+/// <summary>P/Invoke surface of tempctl.dll / libtempctl.so (src/tempctl.h, TempCtl v3).</summary>
 public static unsafe class TempCtlNative
 {
     public const string Lib = "tempctl";
 
-    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern uint TcVersion();
-    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int TcInputCount();
-    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int TcSignalCount();
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int TcVersion();
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int TcSetupCount();
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int TcDiagCount();
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int TcStep(int zone, int action, uint nowMs, float* input, int inLen, float* output, int outLen);
+    public static extern int TcInit(int zone, uint nowMs, double* setupArray, int setupLen, int* status, int* warning);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int TcCheckTemp(int zone, uint nowMs, double temp1, double temp2, int diHeaterFB, int diCoolerFB,
+                                         int* doHeater, int* doCooler, int* status, int* warning);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int TcReset(int zone, uint nowMs, int* status, int* warning);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int TcGetDiag(int zone, double* diagArray, int diagLen);
 
-    public static int Step(int zone, TcAction action, uint nowMs, ReadOnlySpan<float> input, Span<float> output)
+    public static int Init(int zone, uint nowMs, ReadOnlySpan<double> setup, out int status, out int warning)
     {
-        fixed (float* pi = input) fixed (float* po = output)
-            return TcStep(zone, (int)action, nowMs, pi, input.Length, po, output.Length);
+        int st, wn, rc;
+        fixed (double* p = setup) rc = TcInit(zone, nowMs, p, setup.Length, &st, &wn);
+        status = st; warning = wn;
+        return rc;
+    }
+    public static int CheckTemp(int zone, uint nowMs, double temp1, double temp2, int hfb, int cfb,
+                                out int doHeater, out int doCooler, out int status, out int warning)
+    {
+        int dh, dc, st, wn;
+        int rc = TcCheckTemp(zone, nowMs, temp1, temp2, hfb, cfb, &dh, &dc, &st, &wn);
+        doHeater = dh; doCooler = dc; status = st; warning = wn;
+        return rc;
+    }
+    public static int Reset(int zone, uint nowMs, out int status, out int warning)
+    {
+        int st, wn;
+        int rc = TcReset(zone, nowMs, &st, &wn);
+        status = st; warning = wn;
+        return rc;
+    }
+    public static int GetDiag(int zone, Span<double> diag)
+    {
+        fixed (double* p = diag) return TcGetDiag(zone, p, diag.Length);
     }
 }
 
-public enum TcAction { Init = 0, Step = 1, Reset = 2 }
-
-/// <summary>enum TcSignal in tempctl.h: index into the SGL array.</summary>
-public enum TcSignal
+/// <summary>TC_SETUP_* in tempctl.h: index into the setup array of TcInit.</summary>
+public enum TcSetup
 {
-    Setpoint = 0, DeadbandHi = 1, DeadbandLo = 2, HiLimit = 3, LoLimit = 4,
-    ErrorTimeoutMs = 5, DeadbandTimeoutMs = 6, FilterPoints = 7, Temp2Enable = 8, Temp2Tolerance = 9, FeedbackEnable = 10,
-    Temp1 = 11, Temp2 = 12, HeaterFeedback = 13, CoolerFeedback = 14,
-    HeatingCmd = 15, CoolingCmd = 16,
-    ErrorStatus = 17, TempStatus = 18, ControlTemp = 19, Temp1Filtered = 20, Temp2Filtered = 21,
-    HiBand = 22, LoBand = 23, ErrorRemainMs = 24, DbRemainMs = 25, ActiveSensor = 26,
+    TempCtrlEnable = 0, TempUnits = 1, Setpoint = 2, DeadbandHi = 3, DeadbandLo = 4, HiLimit = 5, LoLimit = 6,
+    ErrorTimeout = 7, DeadbandTimeout = 8, AtSetPtTimeout = 9, Temp2Enable = 10, Temp2Offset = 11, Temp2Tolerance = 12,
+    TempCompareTimeout = 13, FilterPoints = 14, FeedbackEnable = 15, RelayFeedbackTimeout = 16,
+}
+
+/// <summary>TC_DIAG_* in tempctl.h: index into the diagnostics array of TcGetDiag.</summary>
+public enum TcDiag
+{
+    ControlTemp = 0, ActiveSensor = 1, Temp1Raw = 2, Temp2Raw = 3, Temp2Corrected = 4, Temp1Avg = 5, Temp2Avg = 6,
+    HiBand = 7, LoBand = 8, InitialHcFlag = 9, DeadbandRemainMs = 10, AtSetPtRemainMs = 11, CompareRemainMs = 12,
+    HeaterFbRemainMs = 13, CoolerFbRemainMs = 14, Temp1OorAccumMs = 15, Temp2OorAccumMs = 16,
+    Temp1OorEventsPerHour = 17, Temp2OorEventsPerHour = 18, StatusMirror = 19, WarningMirror = 20,
+    DoHeaterMirror = 21, DoCoolerMirror = 22, AppliedFilterPoints = 23, ZoneInitialized = 24,
+}
+
+/// <summary>TC_ST_* status codes: 0..5 are states, 10 and above are faults.</summary>
+public enum TcStatus
+{
+    TempCtrlDisabled = 0, TempAtSetPt = 1, HeaterON = 2, CoolerON = 3, HeatPending = 4, CoolPending = 5,
+    Temp1FailHigh = 10, Temp1FailLow = 11, BothSensorsFailed = 12, TempDisagreeFault = 13, ConfigFault = 14,
+    HeaterFBFault = 15, CoolerFBFault = 16,
+}
+
+/// <summary>TC_WN_* warning codes (one value, the lowest active code).</summary>
+public enum TcWarning
+{
+    NoWarning = 0, Temp1OutOfRange = 1, Temp2OutOfRange = 2, HeaterFBMismatch = 3, CoolerFBMismatch = 4,
+    TempDisagree = 5, RunningOnTemp2 = 6, ConfigInvalid = 7,
 }
 
 public static class TcConst
 {
-    public const int InputCount = 17;
-    public const int SignalCount = 27;
+    public const int SetupCount = 17;
+    public const int DiagCount = 25;
     public const int MaxZones = 16;
-    public const int Ok = 0, WarnConfig = 1, ErrArg = -1, ErrZone = -2, ErrAction = -3, ErrNotInit = -4;
-}
-
-[Flags]
-public enum TcErrorBits : uint
-{
-    None = 0,
-    T1Hi = 1 << 0, T1Lo = 1 << 1, T1Bad = 1 << 2,
-    T2Hi = 1 << 3, T2Lo = 1 << 4, T2Bad = 1 << 5,
-    Disagree = 1 << 6, HeaterFeedback = 1 << 7, CoolerFeedback = 1 << 8, Config = 1 << 9,
-}
-
-public enum TcTempStatus
-{
-    InBand = 0, HeatPending = 1, Heating = 2, CoolPending = 3, Cooling = 4,
-    ErrorPending = 5, Stopped = 6, Degraded = 7, FilterWarmup = 8,
+    public const int FaultFirst = 10;
+    public const int Ok = 0, ErrArg = -1, ErrZone = -2;
+    public static bool IsFault(TcStatus s) => (int)s >= FaultFirst;
+    public static string Name(TcStatus s) => Enum.IsDefined(s) ? s.ToString() : $"Status{(int)s}";
+    public static string Name(TcWarning w) => Enum.IsDefined(w) ? w.ToString() : $"Warning{(int)w}";
 }

@@ -46,7 +46,7 @@ public static class NativeLoader
     public static string Describe()
     {
         Register();
-        return $"tempctl {Ver(TempCtlNative.TcVersion())}, cantp {Ver(CanTpNative.CanTp_Version())}, {RuntimeInformation.RuntimeIdentifier}";
+        return $"tempctl {Ver((uint)TempCtlNative.TcVersion())}, cantp {Ver(CanTpNative.CanTp_Version())}, {RuntimeInformation.RuntimeIdentifier}";
     }
     static string Ver(uint v) => $"{v >> 16}.{(v >> 8) & 0xFF}.{v & 0xFF}";
 }

@@ -2,6 +2,61 @@
 
 ---
 
+## v3.0.0 - 2026-09-18
+
+Major revision from the v3.0.0 implementation handoff (rules decided with
+the system owner; `TEMPCTL-SPEC-v3.0.0.md`, `TEMPCTL-CAPABILITY-v3.0.0.md`),
+including Amendment A (2026-09-18): the out-of-range accumulator drains at
+half rate (`DRAIN = 0.5`, so a sensor out of range more than a third of the
+time fails: 50 % duty at about 4 x `ErrorTimeout`), the accumulator charges
+on its first out-of-range tick, and `ErrorTimeout` must be at least two loop
+periods. `TcVersion()` reports 0x030000. Not backwards compatible with v2.
+
+- **API split (C1, C2, C20).** `TcStep` and its 17-in / 27-out SGL array are
+  gone. `TcInit(zone, nowMs, setupArray[17], ...)` loads the setup (once, and
+  again for any parameter change); `TcCheckTemp(zone, nowMs, temp1, temp2,
+  diHeaterFB, diCoolerFB, &doHeater, &doCooler, &status, &warning)` is the
+  control tick with live signals only; `TcReset`; `TcGetDiag(zone,
+  diagArray[25], 25)` read-only diagnostics; `TcSetupCount`, `TcDiagCount`.
+  Everything is `double` / `int32_t` / `uint32_t`, no enums or structs in the
+  header (LabVIEW Import Shared Library wizard). No input echo, no CAN.
+- **New setup parameters (C3-C5, C7, C8, C15):** `TempCtrlEnable`,
+  `TempUnits` (label), `AtSetPtTimeout`, `Temp2Offset`,
+  `TempCompareTimeout`, `RelayFeedbackTimeout`.
+- **Behaviour:** raw control and limits, averages only for the comparison
+  (C9); NaN/Inf = out of range high, no separate bad bits (C10); leaky
+  out-of-range accumulator (charge 1, drain 0.5) instead of a restarting
+  countdown (C11); a single failed sensor with a healthy partner is a warning
+  (`RunningOnTemp2`), not a fault (C12); control pauses while the active
+  sensor is out of range instead of dropping the relays (C13);
+  `Initial_HC_Flag` replaces the warm-up status and gates the comparison
+  (C14); disagreement warns at `TempCompareTimeout/10` and faults at the
+  full time (C6); a running relay releases only after `AtSetPtTimeout` at
+  the setpoint (C8); per-relay feedback warning and fault (C15); config
+  check at Init with `ConfigFault` / `ConfigInvalid` (C16); Reset clears the
+  averages and all history (C17); relays kept across a re-Init of a running
+  zone (C18); single status code (states 0-5, faults 10-16) and single
+  warning code (0-7) instead of the bit mask (C19); backwards time steps
+  count as 0 ms (C21); 60-minute out-of-range event counters (C22).
+- **CAN:** `dbc\tempctl.dbc` now defines the 25-value diagnostics array
+  (PGN 65280, 55 bytes, 9-frame BAM) with status and warning value tables;
+  the host packs `TcGetDiag`'s output with `CanTp_Pack`.
+- **Tests:** `test_tempctl` rewritten, 1516 checks organised by rule number
+  and by the handoff's change list (C1-C22) and scenarios (S1-S15), with
+  the four duty points of Amendment A's table; passes x64, x86 and on the
+  Raspberry Pi (aarch64). Oracle rewritten for the new API: 1287
+  diagnostics arrays bit-identical with cantools. The bare Pi run is now
+  captured in `TESTLOG.txt`.
+- **Simulator:** TempSim 2.0.0 (separate package) drives the v3 API and
+  runs the 15 required scenarios plus `flicker-25` with built-in
+  expectations.
+- **Documents:** all package documents rewritten; the spec lists the
+  implementation decisions for markup (section 12; the C11-vs-R5.4
+  inconsistency it raised is resolved by Amendment A). The v2.0.1 spec
+  moved to the repository's `docs\notes`.
+- CanTp remains v1.3.1 (only `Define` / `Pack` / `Unpack` / `RxFeed` and the
+  queries are used; minimum CanTp 1.0.0).
+
 ## v2.0.3 - 2026-09-15
 
 Packaging release: no controller change (`TcVersion()` reports 2.0.3; the

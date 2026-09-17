@@ -7,7 +7,7 @@ public partial class App : Application
 {
     /// <summary>--screenshot out.png [--scenario NAME] [--seconds N]: run headless, render the window, save a PNG, exit.</summary>
     public static string? ScreenshotPath { get; private set; }
-    public static string ScreenshotScenario { get; private set; } = "sensor-failover";
+    public static string ScreenshotScenario { get; private set; } = "failover";
     public static int ScreenshotSeconds { get; private set; } = 70;
 
     void OnStartup(object sender, StartupEventArgs e)

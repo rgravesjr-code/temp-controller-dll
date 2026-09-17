@@ -17,6 +17,7 @@ public static unsafe class CanTpNative
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_PayloadLength(int slot);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_FrameCount(int slot);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_OutputSize(int slot);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_Pack(int slot, double* values, int nValues, ulong timestamp100ns, ulong spacing100ns, byte* output, int outLen, int* bytesWritten);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_PackSgl(int slot, float* values, int nValues, ulong timestamp100ns, ulong spacing100ns, byte* output, int outLen, int* bytesWritten);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_Unpack(int slot, byte* frames, int framesLen, double* values, int nValues, int* bytesConsumed);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_RxFeed(int slot, byte* frame, int frameLen, double* values, int nValues);
@@ -28,6 +29,14 @@ public static unsafe class CanTpNative
     {
         fixed (double* pm = msgDef) fixed (double* ps = sigDefs)
             return CanTp_Define(slot, pm, msgDef.Length, ps, nSig);
+    }
+    /// <summary>CanTp_Pack: the diagnostics array (doubles) -> raw frame records.</summary>
+    public static int Pack(int slot, ReadOnlySpan<double> values, ulong ts, ulong spacing, Span<byte> output, out int written)
+    {
+        int w, rc;
+        fixed (double* pv = values) fixed (byte* po = output) rc = CanTp_Pack(slot, pv, values.Length, ts, spacing, po, output.Length, &w);
+        written = w;
+        return rc;
     }
     public static int PackSgl(int slot, ReadOnlySpan<float> values, ulong ts, ulong spacing, Span<byte> output, out int written)
     {

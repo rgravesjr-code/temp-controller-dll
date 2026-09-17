@@ -26,17 +26,24 @@ public partial class MainWindow : Window
     int _speed = 1;
     bool _running = true;
     Queue<(double At, string Label, Action<Simulation> Apply)> _events = new();
+    Queue<(double At, string Label, Func<Simulation, bool> Check)> _checks = new();
+    int _checksOk, _checksFailed;
     CsvLogger? _csv; NclWriter? _ncl;
     readonly List<Action> _refreshers = new();          // UI controls re-read from the model
     bool _suppress;                                     // while refreshing controls programmatically
 
     sealed record DecodedRow(int Index, string Name, string Value, string Unpacked, string Unit, string Bits);
 
+    static readonly Brush s_orange = new SolidColorBrush(Color.FromRgb(200, 110, 0));
+    static readonly Brush s_heat = new SolidColorBrush(Color.FromRgb(200, 50, 20));
+    static readonly Brush s_cool = new SolidColorBrush(Color.FromRgb(30, 90, 200));
+
     public MainWindow()
     {
         InitializeComponent();
         NativeLoader.Register();
         try { if (File.Exists(SettingsFile)) _cfg = SimConfig.Load(SettingsFile); } catch { _cfg = new SimConfig(); }
+        _cfg.Profile.Clear(); _cfg.Companion = null;                       // the interactive app drives the plant, one zone
         _table = MessageTable.Load(MessageTable.DefaultPath);
         var av = typeof(MainWindow).Assembly.GetName().Version;
         VersionText.Text = $"TempSim {(av != null ? $"{av.Major}.{av.Minor}.{av.Build}" : "?")}  |  " + NativeLoader.Describe() + $"  |  {_table.Message} PGN {(_table.CanId >> 8) & 0x3FFFF} ({_table.Length} bytes)";
@@ -61,7 +68,7 @@ public partial class MainWindow : Window
     {
         _sim?.Dispose();
         _sim = new Simulation(_cfg.Clone(), _table);
-        _events.Clear();
+        _events.Clear(); _checks.Clear(); _checksOk = _checksFailed = 0;
         EventText.Text = "";
         Plot.Clear();
         RefreshFromModels();
@@ -71,20 +78,34 @@ public partial class MainWindow : Window
     void FireDueEvents(double tNext)
     {
         bool any = false;
-        while (_events.Count > 0 && _events.Peek().At <= tNext)
+        while (_events.Count > 0 && _events.Peek().At <= tNext + 1e-9)
         {
             var (at, label, apply) = _events.Dequeue();
             apply(_sim);
-            EventText.Text = $"{at:0} s: {label}";
+            EventText.Text = $"{at:0.0} s: {label}";
             any = true;
         }
         if (any) RefreshFromModels();
     }
 
+    void CheckDue(double t)
+    {
+        while (_checks.Count > 0 && _checks.Peek().At <= t + 1e-9)
+        {
+            var (at, label, check) = _checks.Dequeue();
+            bool ok;
+            try { ok = check(_sim); } catch { ok = false; }
+            if (ok) _checksOk++; else _checksFailed++;
+            EventText.Text = $"{at:0.0} s: {(ok ? "ok" : "FAIL")} {label}";
+        }
+    }
+
     void StepOnce()
     {
-        FireDueEvents((_sim.Tick + 1) * _sim.Config.PeriodMs / 1000.0);
+        double t = (_sim.Tick + 1) * _sim.Config.PeriodMs / 1000.0;
+        FireDueEvents(t);
         _sim.Step();
+        CheckDue(t);
         _csv?.Log(_sim); _ncl?.Log(_sim);
     }
 
@@ -114,6 +135,7 @@ public partial class MainWindow : Window
         _cfg = sc.Config.Clone();
         Restart();
         _events = new Queue<(double, string, Action<Simulation>)>(sc.Events.OrderBy(ev => ev.AtSeconds));
+        _checks = new Queue<(double, string, Func<Simulation, bool>)>(sc.Expectations.OrderBy(ev => ev.AtSeconds));
         EventText.Text = $"{sc.Name}: {sc.Description}";
     }
 
@@ -131,40 +153,60 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------------ UI update
+    PlotView.Sample CurrentSample()
+    {
+        var c = _sim.Ctl; var k = _sim.Config.Controller;
+        return new PlotView.Sample(_sim.TimeSeconds, _sim.Plant.Temperature, _sim.Temp1Raw, _sim.Temp2Raw, c.ControlTemp,
+            k.Setpoint, c.HiBand, c.LoBand, k.HiLimit, k.LoLimit, c.DoHeater, c.DoCooler, (int)c.Status, (int)c.Warning);
+    }
+
     void UpdateUi()
     {
-        var c = _sim.Ctl;
-        Plot.Add(new PlotView.Sample(_sim.TimeSeconds, _sim.Plant.Temperature, _sim.Temp1Raw, _sim.Temp2Raw, c.ControlTemp,
-            c.Get(TcSignal.Setpoint), c.HiBand, c.LoBand, c.Get(TcSignal.HiLimit), c.Get(TcSignal.LoLimit),
-            c.HeatingCmd, c.CoolingCmd, (int)c.TempStatus));
+        var c = _sim.Ctl; var k = _sim.Config.Controller;
+        Plot.Add(CurrentSample());
 
-        StatusText.Text = $"{c.TempStatus}   ({(int)c.TempStatus})";
-        StatusText.Foreground = c.TempStatus switch
+        StatusText.Text = Controller.Describe(c.Status);
+        StatusText.Foreground = c.IsFault ? Brushes.Red : c.Status switch
         {
-            TcTempStatus.Stopped => Brushes.Red,
-            TcTempStatus.ErrorPending or TcTempStatus.Degraded => new SolidColorBrush(Color.FromRgb(200, 110, 0)),
-            TcTempStatus.Heating => new SolidColorBrush(Color.FromRgb(200, 50, 20)),
-            TcTempStatus.Cooling => new SolidColorBrush(Color.FromRgb(30, 90, 200)),
+            TcStatus.HeaterON => s_heat,
+            TcStatus.CoolerON => s_cool,
+            TcStatus.HeatPending or TcStatus.CoolPending => s_orange,
+            TcStatus.TempCtrlDisabled => Brushes.Gray,
             _ => Brushes.Black,
         };
-        ControlTempText.Text = $"t = {_sim.TimeSeconds:0.0} s    ControlTemp {Fmt(c.ControlTemp)}   Temp1f {Fmt(c.Temp1Filtered)}   Temp2f {Fmt(c.Temp2Filtered)}   band [{Fmt(c.LoBand)}, {Fmt(c.HiBand)}]";
-        ErrorText.Text = c.ErrorStatus == TcErrorBits.None ? "ErrorStatus: none" : $"ErrorStatus {(uint)c.ErrorStatus}: {Controller.Describe(c.ErrorStatus)}   (rc {c.LastRc})";
-        float errTo = Math.Max(1, c.Get(TcSignal.ErrorTimeoutMs)), dbTo = Math.Max(1, c.Get(TcSignal.DeadbandTimeoutMs));
-        ErrorBar.Maximum = errTo; ErrorBar.Value = Math.Min(errTo, c.ErrorRemainMs); ErrorRemainText.Text = c.ErrorRemainMs > 0 ? $"{c.ErrorRemainMs:0} ms" : "";
-        DbBar.Maximum = dbTo; DbBar.Value = Math.Min(dbTo, c.DbRemainMs); DbRemainText.Text = c.DbRemainMs > 0 ? $"{c.DbRemainMs:0} ms" : "";
-        HeatLamp.IsOn = c.HeatingCmd; CoolLamp.IsOn = c.CoolingCmd;
-        HeatFbLamp.IsOn = _sim.Heater.Contact; CoolFbLamp.IsOn = _sim.Cooler.Contact;
-        SensorText.Text = $"Active sensor: {c.ActiveSensor}    Temp1 {Fmt(_sim.Temp1Raw)}   Temp2 {Fmt(_sim.Temp2Raw)}   plant {_sim.Plant.Temperature:0.00}";
+        WarningText.Text = "Warning: " + Controller.Describe(c.Warning) + (c.Warning == TcWarning.RunningOnTemp2 ? "  (control on sensor 2 until Reset/Init)" : "");
+        WarningText.Foreground = c.Warning == TcWarning.NoWarning ? Brushes.DimGray : s_orange;
+        ControlTempText.Text = $"t = {_sim.TimeSeconds:0.0} s    ControlTemp {Fmt(c.ControlTemp)}   Temp1Avg {Fmt(c.Temp1Avg)}   Temp2Avg {Fmt(c.Temp2Avg)}   band [{Fmt(c.LoBand)}, {Fmt(c.HiBand)}]   rc {c.LastRc}";
 
-        FramesTitle.Text = $"NI-XNET raw frames (CanTp_PackSgl): J1939 BAM, {_sim.FrameCount} frames x 24 bytes, payload {_table.Length} bytes, unpack mismatches {_sim.UnpackMismatches}";
+        Bar(DbBar, DbText, k.DeadbandTimeoutMs, c.DeadbandRemainMs);
+        Bar(AspBar, AspText, k.AtSetPtTimeoutMs, c.AtSetPtRemainMs);
+        Bar(CmpBar, CmpText, k.TempCompareTimeoutMs, c.CompareRemainMs);
+        Bar(HfbBar, HfbText, k.RelayFeedbackTimeoutMs, c.HeaterFbRemainMs);
+        Bar(CfbBar, CfbText, k.RelayFeedbackTimeoutMs, c.CoolerFbRemainMs);
+        Bar(Acc1Bar, Acc1Text, k.ErrorTimeoutMs, c.Temp1OorAccumMs);
+        Bar(Acc2Bar, Acc2Text, k.ErrorTimeoutMs, c.Temp2OorAccumMs);
+        HeatLamp.IsOn = c.DoHeater; CoolLamp.IsOn = c.DoCooler;
+        HeatFbLamp.IsOn = _sim.Heater.Contact; CoolFbLamp.IsOn = _sim.Cooler.Contact;
+        SensorText.Text = $"Active sensor {c.ActiveSensor}    Temp1 {Fmt(_sim.Temp1Raw)}   Temp2 {Fmt(_sim.Temp2Raw)} (corrected {Fmt(c.Temp2Corrected)})   plant {_sim.Plant.Temperature:0.00}\n" +
+                          $"Initial_HC_Flag {(c.InitialHcFlag ? 1 : 0)}    out-of-range events/h  S1 {c.Temp1OorEventsPerHour}  S2 {c.Temp2OorEventsPerHour}    FilterPoints in use {c.AppliedFilterPoints}" +
+                          (_checksOk + _checksFailed > 0 ? $"\nScenario expectations: {_checksOk} ok, {_checksFailed} failed" : "");
+
+        FramesTitle.Text = $"NI-XNET raw frames (CanTp_Pack of the TcGetDiag array): J1939 BAM, {_sim.FrameCount} frames x 24 bytes, payload {_table.Length} bytes, unpack mismatches {_sim.UnpackMismatches}";
         FramesText.Text = string.Join(Environment.NewLine, _sim.FrameLines()) + Environment.NewLine + "payload " + _sim.PayloadHex();
-        var rows = new List<DecodedRow>(TcConst.SignalCount);
-        for (int i = 0; i < TcConst.SignalCount; i++)
+        var rows = new List<DecodedRow>(TcConst.DiagCount);
+        for (int i = 0; i < TcConst.DiagCount; i++)
         {
             var sd = _table.SigDefs[i];
-            rows.Add(new DecodedRow(i, _table.Signals[i], Fmt(c.Out[i]), Fmt(_sim.Unpacked[i]), _table.Units[i], $"{(int)sd[0]}|{(int)sd[1]}"));
+            rows.Add(new DecodedRow(i, _table.Signals[i], Fmt(c.Diag[i]), Fmt(_sim.Unpacked[i]), _table.Units[i], $"{(int)sd[0]}|{(int)sd[1]}"));
         }
         DecodedList.ItemsSource = rows;
+    }
+
+    static void Bar(ProgressBar bar, TextBlock text, double max, double value)
+    {
+        max = Math.Max(1, max);
+        bar.Maximum = max; bar.Value = Math.Min(max, value);
+        text.Text = value > 0 ? $"{value:0} ms" : "";
     }
 
     static string Fmt(double v) => double.IsNaN(v) ? "NaN" : v.ToString("0.###", CultureInfo.InvariantCulture);
@@ -172,43 +214,49 @@ public partial class MainWindow : Window
     // ------------------------------------------------------------------ settings panels
     void BuildPanels()
     {
-        var cc = _cfg.Controller;
-        Num(ControllerPanel, "Setpoint", () => cc.Setpoint, v => { _cfg.Controller.Setpoint = v; });
-        Num(ControllerPanel, "DeadbandHi (offset)", () => cc.DeadbandHi, v => _cfg.Controller.DeadbandHi = v);
-        Num(ControllerPanel, "DeadbandLo (offset)", () => cc.DeadbandLo, v => _cfg.Controller.DeadbandLo = v);
-        Num(ControllerPanel, "HiLimit", () => cc.HiLimit, v => _cfg.Controller.HiLimit = v);
-        Num(ControllerPanel, "LoLimit", () => cc.LoLimit, v => _cfg.Controller.LoLimit = v);
-        Num(ControllerPanel, "ErrorTimeout ms", () => cc.ErrorTimeoutMs, v => _cfg.Controller.ErrorTimeoutMs = v);
-        Num(ControllerPanel, "DeadbandTimeout ms", () => cc.DeadbandTimeoutMs, v => _cfg.Controller.DeadbandTimeoutMs = v);
-        Num(ControllerPanel, "FilterPoints (1..64)", () => cc.FilterPoints, v => _cfg.Controller.FilterPoints = v);
-        Bool(ControllerPanel, "Temp2Enable", () => cc.Temp2Enable, v => _cfg.Controller.Temp2Enable = v);
-        Num(ControllerPanel, "Temp2Tolerance", () => cc.Temp2Tolerance, v => _cfg.Controller.Temp2Tolerance = v);
-        Bool(ControllerPanel, "FeedbackEnable", () => cc.FeedbackEnable, v => _cfg.Controller.FeedbackEnable = v);
+        var cc = () => _cfg.Controller;
+        Bool(ControllerPanel, "TempCtrlEnable (master switch)", () => cc().TempCtrlEnable, v => cc().TempCtrlEnable = v);
+        Num(ControllerPanel, "TempUnits (0 degF, 1 degC, label only)", () => cc().TempUnits, v => cc().TempUnits = (int)v);
+        Num(ControllerPanel, "Setpoint", () => cc().Setpoint, v => cc().Setpoint = v);
+        Num(ControllerPanel, "DeadbandHi (offset)", () => cc().DeadbandHi, v => cc().DeadbandHi = v);
+        Num(ControllerPanel, "DeadbandLo (offset)", () => cc().DeadbandLo, v => cc().DeadbandLo = v);
+        Num(ControllerPanel, "HiLimit", () => cc().HiLimit, v => cc().HiLimit = v);
+        Num(ControllerPanel, "LoLimit", () => cc().LoLimit, v => cc().LoLimit = v);
+        Num(ControllerPanel, "ErrorTimeout ms", () => cc().ErrorTimeoutMs, v => cc().ErrorTimeoutMs = v);
+        Num(ControllerPanel, "DeadbandTimeout ms", () => cc().DeadbandTimeoutMs, v => cc().DeadbandTimeoutMs = v);
+        Num(ControllerPanel, "AtSetPtTimeout ms", () => cc().AtSetPtTimeoutMs, v => cc().AtSetPtTimeoutMs = v);
+        Bool(ControllerPanel, "Temp2Enable", () => cc().Temp2Enable, v => cc().Temp2Enable = v);
+        Num(ControllerPanel, "Temp2Offset", () => cc().Temp2Offset, v => cc().Temp2Offset = v);
+        Num(ControllerPanel, "Temp2Tolerance", () => cc().Temp2Tolerance, v => cc().Temp2Tolerance = v);
+        Num(ControllerPanel, "TempCompareTimeout ms", () => cc().TempCompareTimeoutMs, v => cc().TempCompareTimeoutMs = v);
+        Num(ControllerPanel, "FilterPoints (1..64, else 4)", () => cc().FilterPoints, v => cc().FilterPoints = v);
+        Bool(ControllerPanel, "FeedbackEnable", () => cc().FeedbackEnable, v => cc().FeedbackEnable = v);
+        Num(ControllerPanel, "RelayFeedbackTimeout ms", () => cc().RelayFeedbackTimeoutMs, v => cc().RelayFeedbackTimeoutMs = v);
 
-        Num(PlantPanel, "Ambient", () => _sim.Plant.Ambient, v => { _cfg.Plant.Ambient = v; _sim.Plant.Ambient = v; });
-        Num(PlantPanel, "Heat rate deg/s", () => _sim.Plant.HeatRate, v => { _cfg.Plant.HeatRate = v; _sim.Plant.HeatRate = v; });
-        Num(PlantPanel, "Cool rate deg/s", () => _sim.Plant.CoolRate, v => { _cfg.Plant.CoolRate = v; _sim.Plant.CoolRate = v; });
-        Num(PlantPanel, "Lag to ambient 1/s", () => _sim.Plant.LagPerSec, v => { _cfg.Plant.LagPerSec = v; _sim.Plant.LagPerSec = v; });
-        Num(PlantPanel, "Plant temperature now", () => _sim.Plant.Temperature, v => _sim.Plant.Temperature = v);
+        Num(PlantPanel, "Ambient", () => _sim.Plant.Ambient, v => { _cfg.Plant.Ambient = v; _sim.Plant.Ambient = v; }, false);
+        Num(PlantPanel, "Heat rate deg/s", () => _sim.Plant.HeatRate, v => { _cfg.Plant.HeatRate = v; _sim.Plant.HeatRate = v; }, false);
+        Num(PlantPanel, "Cool rate deg/s", () => _sim.Plant.CoolRate, v => { _cfg.Plant.CoolRate = v; _sim.Plant.CoolRate = v; }, false);
+        Num(PlantPanel, "Lag to ambient 1/s", () => _sim.Plant.LagPerSec, v => { _cfg.Plant.LagPerSec = v; _sim.Plant.LagPerSec = v; }, false);
+        Num(PlantPanel, "Plant temperature now", () => _sim.Plant.Temperature, v => _sim.Plant.Temperature = v, false);
 
         SensorPanel(Sensor1Panel, () => _sim.Sensor1, () => _cfg.Sensor1);
         SensorPanel(Sensor2Panel, () => _sim.Sensor2, () => _cfg.Sensor2);
 
-        Bool(RelayPanel, "Heater stuck open (never closes)", () => _sim.Heater.StuckOpen, v => { _cfg.Heater.StuckOpen = v; _sim.Heater.StuckOpen = v; });
-        Bool(RelayPanel, "Heater stuck closed", () => _sim.Heater.StuckClosed, v => { _cfg.Heater.StuckClosed = v; _sim.Heater.StuckClosed = v; });
-        Num(RelayPanel, "Heater answer delay (ticks)", () => _sim.Heater.DelayTicks, v => { _cfg.Heater.DelayTicks = (int)v; _sim.Heater.DelayTicks = (int)v; });
-        Bool(RelayPanel, "Cooler stuck open", () => _sim.Cooler.StuckOpen, v => { _cfg.Cooler.StuckOpen = v; _sim.Cooler.StuckOpen = v; });
-        Bool(RelayPanel, "Cooler stuck closed", () => _sim.Cooler.StuckClosed, v => { _cfg.Cooler.StuckClosed = v; _sim.Cooler.StuckClosed = v; });
-        Num(RelayPanel, "Cooler answer delay (ticks)", () => _sim.Cooler.DelayTicks, v => { _cfg.Cooler.DelayTicks = (int)v; _sim.Cooler.DelayTicks = (int)v; });
+        Bool(RelayPanel, "Heater stuck open (never closes)", () => _sim.Heater.StuckOpen, v => { _cfg.Heater.StuckOpen = v; _sim.Heater.StuckOpen = v; }, false);
+        Bool(RelayPanel, "Heater stuck closed", () => _sim.Heater.StuckClosed, v => { _cfg.Heater.StuckClosed = v; _sim.Heater.StuckClosed = v; }, false);
+        Num(RelayPanel, "Heater answer delay (ticks)", () => _sim.Heater.DelayTicks, v => { _cfg.Heater.DelayTicks = (int)v; _sim.Heater.DelayTicks = (int)v; }, false);
+        Bool(RelayPanel, "Cooler stuck open", () => _sim.Cooler.StuckOpen, v => { _cfg.Cooler.StuckOpen = v; _sim.Cooler.StuckOpen = v; }, false);
+        Bool(RelayPanel, "Cooler stuck closed", () => _sim.Cooler.StuckClosed, v => { _cfg.Cooler.StuckClosed = v; _sim.Cooler.StuckClosed = v; }, false);
+        Num(RelayPanel, "Cooler answer delay (ticks)", () => _sim.Cooler.DelayTicks, v => { _cfg.Cooler.DelayTicks = (int)v; _sim.Cooler.DelayTicks = (int)v; }, false);
     }
 
     void SensorPanel(Panel p, Func<SensorModel> model, Func<SimConfig.SensorConfig> cfg)
     {
-        Num(p, "Offset", () => model().Offset, v => { cfg().Offset = v; model().Offset = v; });
-        Num(p, "Noise amplitude", () => model().NoiseAmplitude, v => { cfg().NoiseAmplitude = v; model().NoiseAmplitude = v; });
-        Num(p, "Lag 1/s (0 = none)", () => model().LagPerSec, v => { cfg().LagPerSec = v; model().LagPerSec = v; });
+        Num(p, "Offset", () => model().Offset, v => { cfg().Offset = v; model().Offset = v; }, false);
+        Num(p, "Noise amplitude", () => model().NoiseAmplitude, v => { cfg().NoiseAmplitude = v; model().NoiseAmplitude = v; }, false);
+        Num(p, "Lag 1/s (0 = none)", () => model().LagPerSec, v => { cfg().LagPerSec = v; model().LagPerSec = v; }, false);
         Combo(p, "Fault", Enum.GetNames<SensorFault>(), () => (int)model().Fault, v => model().Fault = (SensorFault)v);
-        Num(p, "Stuck value", () => model().StuckValue, v => model().StuckValue = v);
+        Num(p, "Stuck value", () => model().StuckValue, v => model().StuckValue = v, false);
         var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
         var check = new CheckBox { Content = "Override", VerticalAlignment = VerticalAlignment.Center, Width = 80 };
         var value = new TextBlock { Width = 50, VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Right, Margin = new Thickness(4, 0, 0, 0) };
@@ -222,7 +270,8 @@ public partial class MainWindow : Window
         p.Children.Add(row);
     }
 
-    void Num(Panel p, string label, Func<double> get, Action<float> set)
+    /// <param name="reinit">true: the value is part of the controller setup and a change means TcInit.</param>
+    void Num(Panel p, string label, Func<double> get, Action<double> set, bool reinit = true)
     {
         var row = new DockPanel();
         var box = new TextBox { Width = 80, TextAlignment = TextAlignment.Right };
@@ -232,7 +281,7 @@ public partial class MainWindow : Window
         void Commit()
         {
             if (_suppress) return;
-            if (float.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) { set(v); ApplyConfig(); box.Background = Brushes.White; }
+            if (double.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) { set(v); if (reinit) ApplyConfig(); box.Background = Brushes.White; }
             else box.Background = Brushes.MistyRose;
         }
         box.LostFocus += (_, _) => Commit();
@@ -241,11 +290,11 @@ public partial class MainWindow : Window
         p.Children.Add(row);
     }
 
-    void Bool(Panel p, string label, Func<bool> get, Action<bool> set)
+    void Bool(Panel p, string label, Func<bool> get, Action<bool> set, bool reinit = true)
     {
         var check = new CheckBox { Content = label };
-        check.Checked += (_, _) => { if (!_suppress) { set(true); ApplyConfig(); } };
-        check.Unchecked += (_, _) => { if (!_suppress) { set(false); ApplyConfig(); } };
+        check.Checked += (_, _) => { if (!_suppress) { set(true); if (reinit) ApplyConfig(); } };
+        check.Unchecked += (_, _) => { if (!_suppress) { set(false); if (reinit) ApplyConfig(); } };
         _refreshers.Add(() => check.IsChecked = get());
         p.Children.Add(check);
     }
@@ -263,11 +312,12 @@ public partial class MainWindow : Window
         p.Children.Add(row);
     }
 
-    /// <summary>Push the (possibly edited) controller configuration into the running simulation.</summary>
+    /// <summary>Push the edited controller setup into the running simulation: TcInit with the full array (R9.3 keeps the relays).</summary>
     void ApplyConfig()
     {
         _sim.ApplyControllerConfig(_cfg.Controller);
         RefreshFromModels();
+        UpdateUi();
     }
 
     void RefreshFromModels()
@@ -321,9 +371,7 @@ public partial class MainWindow : Window
         for (int i = 0; i < ticks; i++)
         {
             StepOnce();
-            if (i % 5 == 0) Plot.Add(new PlotView.Sample(_sim.TimeSeconds, _sim.Plant.Temperature, _sim.Temp1Raw, _sim.Temp2Raw, _sim.Ctl.ControlTemp,
-                _sim.Ctl.Get(TcSignal.Setpoint), _sim.Ctl.HiBand, _sim.Ctl.LoBand, _sim.Ctl.Get(TcSignal.HiLimit), _sim.Ctl.Get(TcSignal.LoLimit),
-                _sim.Ctl.HeatingCmd, _sim.Ctl.CoolingCmd, (int)_sim.Ctl.TempStatus));
+            if (i % 5 == 0) Plot.Add(CurrentSample());
         }
         double simMs = sw.Elapsed.TotalMilliseconds;
         UpdateUi();
@@ -335,10 +383,12 @@ public partial class MainWindow : Window
             var enc = new PngBitmapEncoder();
             enc.Frames.Add(BitmapFrame.Create(rtb));
             using (var f = File.Create(App.ScreenshotPath!)) enc.Save(f);
+            bool ok = _sim.UnpackMismatches == 0 && _checksFailed == 0;
             File.WriteAllText(Path.ChangeExtension(App.ScreenshotPath!, ".perf.txt"),
-                $"scenario {sc.Name}, {ticks} ticks simulated in {simMs:0.0} ms ({simMs / ticks * 1000:0.0} us/tick incl. pack+unpack), " +
-                $"final status {_sim.Ctl.TempStatus}, errors {Controller.Describe(_sim.Ctl.ErrorStatus)}, unpack mismatches {_sim.UnpackMismatches}\n");
-            Application.Current.Shutdown(_sim.UnpackMismatches == 0 ? 0 : 1);
+                $"scenario {sc.Name}, {ticks} ticks simulated in {simMs:0.0} ms ({simMs / ticks * 1000:0.0} us/tick incl. TcGetDiag + pack + unpack), " +
+                $"final status {Controller.Describe(_sim.Ctl.Status)}, warning {Controller.Describe(_sim.Ctl.Warning)}, unpack mismatches {_sim.UnpackMismatches}, " +
+                $"expectations {_checksOk} ok / {_checksFailed} failed\n");
+            Application.Current.Shutdown(ok ? 0 : 1);
         });
     }
 }

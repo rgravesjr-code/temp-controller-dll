@@ -1,238 +1,249 @@
-# TempCtl v2 — Package Guide (API reference)
+# TempCtl v3 - Package Guide (API reference)
 
-`tempctl` is a **pure C library with flat `extern "C"` exports** for LabVIEW's
+`tempctl` is a pure C library with flat `extern "C"` exports for LabVIEW's
 Call Library Function Node (CLFN) and any other caller that can load a native
 library: C/C++, Python (ctypes), .NET P/Invoke, MATLAB. It ships as
-`tempctl.dll` (Windows x64 and x86), `libtempctl.so` (Linux x86_64 for the
+`tempctl.dll` (Windows x64 and x86) and `libtempctl.so` (Linux x86_64 for the
 cRIO-904x/905x/906x, aarch64 for the Raspberry Pi). One header, one ABI,
 every build.
 
 **Calling convention:** C (cdecl) on all exports.
-**Numeric types:** `int32_t`/`uint32_t`/`float` exactly as declared; no
-structs, no strings, no callbacks, no allocation.
+**Numeric types:** `int32_t`, `uint32_t`, `double` only; no structs, enums,
+typedefs, strings, callbacks or 64-bit integers in any signature (written for
+the LabVIEW *Import Shared Library* wizard).
 **Arrays:** caller-allocated, passed as a pointer plus an `int32_t` length.
-**Return value:** `int32_t`; 0 = ok, negative = error, positive = warning
-(the call did its work but something needs attention).
-**Threading:** no locks. Different zones may be used from different threads;
-one zone from one thread at a time.
-**Dependencies:** none. The DLL links the CRT statically (imports only
-`KERNEL32.dll`); the .so imports only `memcpy`/`memset` from libc.
+**Return value:** `int32_t`; 0 = the call ran, negative = argument error
+(nothing ran, no output written).
+**Threading:** no locks. One caller thread per zone.
+**Determinism:** no allocation, no file or console I/O, no blocking calls,
+all state static. The DLL links the CRT statically (imports only
+`KERNEL32.dll`); the `.so` imports only `memset` from libc.
 
-The CAN side is **CanTp** (its `CANTP_PACKAGE_GUIDE.md` is in the CanTp
-package; `third_party\cantp\` here holds only the header and binaries); §5
-below shows how the two fit together.
+The behaviour rules are in `TEMPCTL-SPEC-v3.0.0.md` (R-numbered) and, in
+prose, `TEMPCTL-CAPABILITY-v3.0.0.md`; this guide is the table reference.
 
 ## 1. Exports
 
 ```c
-uint32_t TcVersion(void);       // (major << 16) | (minor << 8) | patch; 0x020000 = 2.0.0
-int32_t  TcInputCount(void);    // 17  = TC_INPUT_COUNT
-int32_t  TcSignalCount(void);   // 27  = TC_SIGNAL_COUNT
-int32_t  TcStep(int32_t zone, int32_t action, uint32_t nowMs,
-                const float* in, int32_t inLen, float* out, int32_t outLen);
+int32_t TcVersion(void);       /* (major << 16) | (minor << 8) | patch; 0x030000 = 3.0.0 */
+int32_t TcSetupCount(void);    /* 17 = TC_SETUP_COUNT */
+int32_t TcDiagCount(void);     /* 25 = TC_DIAG_COUNT  */
+int32_t TcInit(int32_t zone, uint32_t nowMs, const double* setupArray, int32_t setupLen,
+               int32_t* status, int32_t* warning);
+int32_t TcCheckTemp(int32_t zone, uint32_t nowMs, double temp1, double temp2,
+                    int32_t diHeaterFB, int32_t diCoolerFB,
+                    int32_t* doHeater, int32_t* doCooler, int32_t* status, int32_t* warning);
+int32_t TcReset(int32_t zone, uint32_t nowMs, int32_t* status, int32_t* warning);
+int32_t TcGetDiag(int32_t zone, double* diagArray, int32_t diagLen);
 ```
 
 ## 2. Return codes
 
 | Code | Value | Meaning |
 |---|---|---|
-| `TC_OK` | 0 | Success |
-| `TC_WARN_CONFIG` | 1 | Configuration inconsistent (see §4.6); the call still ran, and `ErrorStatus` bit 9 is set |
-| `TC_ERR_ARG` | −1 | Null pointer, `inLen < 17` or `outLen < 27` |
-| `TC_ERR_ZONE` | −2 | Zone outside 0..15 |
-| `TC_ERR_ACTION` | −3 | Action not 0/1/2 |
-| `TC_ERR_NOT_INIT` | −4 | Step on a zone that has not been initialised |
+| `TC_OK` | 0 | The call executed. The controller state is in `status` / `warning`, not here. |
+| `TC_ERR_ARG` | -1 | Null pointer, `setupLen != 17`, or `diagLen < 25`. Nothing ran; outputs untouched. |
+| `TC_ERR_ZONE` | -2 | `zone` outside 0..15. Nothing ran; outputs untouched. |
 
-## 3. `TcStep`
+## 3. Functions
+
+### 3.1 `TcInit` - load or replace the setup
 
 | # | Parameter | CLFN type | Pass | Notes |
 |---|---|---|---|---|
-| ret | return | Numeric I32 | | 0, 1 (config warning), or negative |
-| 1 | zone | Numeric I32 | Value | 0..15; each zone is an independent controller |
-| 2 | action | Numeric I32 | Value | 0 Init, 1 Step, 2 Reset |
-| 3 | nowMs | Numeric U32 | Value | `Tick Count (ms)`. Only differences matter; wrap at 2³² is handled |
-| 4 | in | Array, SGL, 1-D | Array Data Pointer | ≥ 17 elements (order below) |
-| 5 | inLen | Numeric I32 | Value | 17 (or 27 when the same array is used for both) |
-| 6 | out | Array, SGL, 1-D | Array Data Pointer | pre-sized to 27 elements; may be the same wire as `in` |
-| 7 | outLen | Numeric I32 | Value | 27 |
+| ret | return | Numeric I32 | | 0 or negative |
+| 1 | zone | Numeric I32 | Value | 0..15 |
+| 2 | nowMs | Numeric U32 | Value | `Tick Count (ms)` |
+| 3 | setupArray | Array, 8-byte Double, 1-D | Array Data Pointer | exactly 17 elements, order in 3.5 |
+| 4 | setupLen | Numeric I32 | Value | 17 |
+| 5 | status | Numeric I32 | Pointer to Value | status after the call (section 4) |
+| 6 | warning | Numeric I32 | Pointer to Value | warning after the call (section 5) |
 
-### 3.1 The signal array
+Call once per zone at start-up and again for any parameter change (the
+whole array each time). Validates the setup (R9.5), stores it, sets the time
+reference and clears faults, warnings, averages, accumulators, hourly counts,
+countdowns and `Initial_HC_Flag`; sensor 1 becomes active. A running zone
+whose new setup is valid and enabled keeps its relay commands (R9.3); every
+other case starts with both relays off. A failed check with `Enable = 1`
+leaves the zone stopped on `ConfigFault` (14); with `Enable = 0` it reports
+warning `ConfigInvalid` (7).
 
-Indices 0..16 are read from `in` on every call and echoed to `out` (15 and 16
-are replaced by the relay commands). Indices 17..26 are outputs only. The
-order is also the order of the CAN message (`dbc\tempctl.dbc`).
+### 3.2 `TcCheckTemp` - one control tick
 
-| Index | Name | Unit | Input | Output |
+| # | Parameter | CLFN type | Pass | Notes |
 |---|---|---|---|---|
-| 0 | Setpoint | ° | heating ends at ≥, cooling ends at ≤ | echoed |
-| 1 | DeadbandHi | ° offset ≥ 0 | `HiBand = Setpoint + DeadbandHi` | echoed |
-| 2 | DeadbandLo | ° offset ≥ 0 | `LoBand = Setpoint − DeadbandLo` | echoed |
-| 3 | HiLimit | ° | a sensor above this for ErrorTimeout has failed (hi) | echoed |
-| 4 | LoLimit | ° | a sensor below this for ErrorTimeout has failed (lo) | echoed |
-| 5 | ErrorTimeout | ms | limit / bad reading / disagreement / feedback countdown | echoed |
-| 6 | DeadbandTimeout | ms | time outside the band before a relay engages | echoed |
-| 7 | FilterPoints | 1..64 | moving-average length per sensor (0 → 4) | echoed |
-| 8 | Temp2Enable | 0/1 | second sensor present | echoed |
-| 9 | Temp2Tolerance | ° | `|Temp1f − Temp2f|` above this for ErrorTimeout → disagree | echoed |
-| 10 | FeedbackEnable | 0/1 | compare relay feedback with the commands | echoed |
-| 11 | Temp1 | ° | sensor 1 (primary), NaN/Inf = bad reading | echoed |
-| 12 | Temp2 | ° | sensor 2 (ignored unless Temp2Enable) | echoed |
-| 13 | HeaterFeedback | 0/1 | measured heater relay state | echoed |
-| 14 | CoolerFeedback | 0/1 | measured cooler relay state | echoed |
-| 15 | HeatingCmd | 0/1 | Init only: initial relay state | heating relay command |
-| 16 | CoolingCmd | 0/1 | Init only: initial relay state | cooling relay command |
-| 17 | ErrorStatus | bit mask | – | see §3.2 |
-| 18 | TempStatus | enum | – | see §3.3 |
-| 19 | ControlTemp | ° | – | filtered value of the active sensor (drives control) |
-| 20 | Temp1Filtered | ° | – | moving average of Temp1; NaN until a valid sample exists |
-| 21 | Temp2Filtered | ° | – | moving average of Temp2; NaN when disabled / no sample |
-| 22 | HiBand | ° | – | Setpoint + DeadbandHi |
-| 23 | LoBand | ° | – | Setpoint − DeadbandLo |
-| 24 | ErrorRemainMs | ms | – | smallest running error countdown, 0 when none |
-| 25 | DbRemainMs | ms | – | remaining deadband countdown, 0 when idle or running |
-| 26 | ActiveSensor | 1/2 | – | the sensor whose filtered value is ControlTemp |
+| ret | return | Numeric I32 | | 0 or negative |
+| 1 | zone | Numeric I32 | Value | 0..15 |
+| 2 | nowMs | Numeric U32 | Value | `Tick Count (ms)` |
+| 3 | temp1 | Numeric DBL | Value | sensor 1, raw, configured unit; NaN = open |
+| 4 | temp2 | Numeric DBL | Value | sensor 2 (ignored unless `Temp2Enable`) |
+| 5 | diHeaterFB | Numeric I32 | Value | heater DO read-back 0/1 (ignored unless `FeedbackEnable`) |
+| 6 | diCoolerFB | Numeric I32 | Value | cooler DO read-back 0/1 |
+| 7 | doHeater | Numeric I32 | Pointer to Value | heater command 0/1 |
+| 8 | doCooler | Numeric I32 | Pointer to Value | cooler command 0/1 (never both 1) |
+| 9 | status | Numeric I32 | Pointer to Value | section 4; >= 10 is a fault |
+| 10 | warning | Numeric I32 | Pointer to Value | section 5 |
 
-### 3.2 ErrorStatus bits
+A zone with no setup or with `TempCtrlEnable = 0` returns `TC_OK`, status
+0, relays 0 and does nothing. A stopped zone (fault) returns its fault code
+with relays 0 until `TcReset` or `TcInit`.
 
-| Bit | Value | Name | Set when | Cleared by |
+### 3.3 `TcReset` - operator reset
+
+| # | Parameter | CLFN type | Pass |
+|---|---|---|---|
+| 1 | zone | Numeric I32 | Value |
+| 2 | nowMs | Numeric U32 | Value |
+| 3 | status | Numeric I32 | Pointer to Value |
+| 4 | warning | Numeric I32 | Pointer to Value |
+
+Keeps the setup; clears faults, warnings, averages, accumulators, hourly
+counts, countdowns and `Initial_HC_Flag`; relays off; sensor 1 active; new
+time reference. Does not clear `ConfigFault` (only a passing `TcInit` does).
+
+### 3.4 `TcGetDiag` - diagnostics
+
+| # | Parameter | CLFN type | Pass |
+|---|---|---|---|
+| 1 | zone | Numeric I32 | Value |
+| 2 | diagArray | Array, 8-byte Double, 1-D | Array Data Pointer (pre-sized to 25) |
+| 3 | diagLen | Numeric I32 | Value (25) |
+
+Read-only, any rate. The 25 values (3.6) are also the CAN message this
+package defines (section 6).
+
+### 3.5 The setup array (`TC_SETUP_*`)
+
+Booleans: `> 0.1` is 1. Timeouts: whole ms, fractions truncated, minimum 1.
+
+| # | Name | Unit | Meaning | Config check |
 |---|---|---|---|---|
-| 0 | 1 | T1_HI | Temp1Filtered > HiLimit for ErrorTimeout → sensor 1 failed | Reset / Init |
-| 1 | 2 | T1_LO | Temp1Filtered < LoLimit for ErrorTimeout → sensor 1 failed | Reset / Init |
-| 2 | 4 | T1_BAD | Temp1 NaN/Inf (or no filtered value yet) for ErrorTimeout → sensor 1 failed | Reset / Init |
-| 3 | 8 | T2_HI | as bit 0 for sensor 2 (only with Temp2Enable) | Reset / Init |
-| 4 | 16 | T2_LO | as bit 1 for sensor 2 | Reset / Init |
-| 5 | 32 | T2_BAD | as bit 2 for sensor 2 | Reset / Init |
-| 6 | 64 | DISAGREE | `|Temp1f − Temp2f| > Temp2Tolerance` for ErrorTimeout | Reset / Init |
-| 7 | 128 | HEATER_FB | HeaterFeedback ≠ previous HeatingCmd for ErrorTimeout | Reset / Init |
-| 8 | 256 | COOLER_FB | CoolerFeedback ≠ previous CoolingCmd for ErrorTimeout | Reset / Init |
-| 9 | 512 | CONFIG | configuration inconsistent on this call (§4.6) | fixing the config |
+| 0 | TempCtrlEnable | 0/1 | master switch | NaN fails |
+| 1 | TempUnits | 0/1 | 0 degF, 1 degC, label only | must be 0 or 1 |
+| 2 | Setpoint | deg | heating releases at >=, cooling at <= | `LoLimit < LoBand <= Setpoint <= HiBand < HiLimit` |
+| 3 | DeadbandHi | deg >= 0 | `HiBand = Setpoint + DeadbandHi` | not negative; not both 0 |
+| 4 | DeadbandLo | deg >= 0 | `LoBand = Setpoint - DeadbandLo` | not negative; not both 0 |
+| 5 | HiLimit | deg | sensor valid range, top | > HiBand |
+| 6 | LoLimit | deg | sensor valid range, bottom | < LoBand |
+| 7 | ErrorTimeout | ms | accumulated out-of-range time that fails a sensor; set it to at least two loop periods | >= 1 |
+| 8 | DeadbandTimeout | ms | time outside the band before a relay turns on | >= 1 |
+| 9 | AtSetPtTimeout | ms | time at the setpoint before the running relay turns off | >= 1 |
+| 10 | Temp2Enable | 0/1 | second sensor fitted | NaN fails |
+| 11 | Temp2Offset | deg | added to temp2 before every use | finite (only if 10) |
+| 12 | Temp2Tolerance | deg >= 0 | largest allowed `|Temp1Avg - Temp2Avg|` | >= 0 (only if 10) |
+| 13 | TempCompareTimeout | ms | disagreement time before the fault; warning at 1/10 | >= 1 (only if 10) |
+| 14 | FilterPoints | 1..64 | average length for the comparison; anything else -> 4 | never |
+| 15 | FeedbackEnable | 0/1 | compare the DO read-backs with the commands | NaN fails |
+| 16 | RelayFeedbackTimeout | ms | mismatch time before a relay fault | >= 1 (only if 15) |
 
-Bits 0..2 keep the v1 meaning (1 hi limit, 2 lo limit, bad reading) for a
-single-sensor system; only "bad" moved from value 3 to bit 2 (value 4).
+### 3.6 The diagnostics array (`TC_DIAG_*`)
 
-### 3.3 TempStatus values
-
-| Value | Name | Meaning |
+| # | Name | Meaning |
 |---|---|---|
-| 0 | InBand | idle, ControlTemp inside [LoBand, HiBand] |
-| 1 | HeatPending | below LoBand, deadband countdown running |
-| 2 | Heating | heating relay on, until ControlTemp ≥ Setpoint |
-| 3 | CoolPending | above HiBand, deadband countdown running |
-| 4 | Cooling | cooling relay on, until ControlTemp ≤ Setpoint |
-| 5 | ErrorPending | an error countdown is running (`ErrorRemainMs > 0`) |
-| 6 | Stopped | fault: relays off, latched until Reset |
-| 7 | Degraded | Temp2Enable and exactly one sensor failed; running on the other |
-| 8 | FilterWarmup | fewer than FilterPoints samples in the active sensor's filter |
+| 0 | ControlTemp | raw value control acts on (sensor 2 corrected); NaN before the first CheckTemp or while the reading is NaN |
+| 1 | ActiveSensor | 1 or 2 |
+| 2 | Temp1Raw | last temp1 |
+| 3 | Temp2Raw | last temp2 (NaN when Temp2 disabled) |
+| 4 | Temp2Corrected | temp2 + Temp2Offset |
+| 5 | Temp1Avg | average of in-range temp1 samples (comparison only); NaN until one exists |
+| 6 | Temp2Avg | average of in-range corrected temp2 samples |
+| 7 | HiBand | Setpoint + DeadbandHi |
+| 8 | LoBand | Setpoint - DeadbandLo |
+| 9 | Initial_HC_Flag | 1 once the first heat-up/cool-down completed (or the zone started in band) |
+| 10 | DeadbandRemainMs | ms before a relay engages; 0 when not counting |
+| 11 | AtSetPtRemainMs | ms before the running relay drops |
+| 12 | CompareRemainMs | ms to the disagreement fault |
+| 13 | HeaterFbRemainMs | ms to the heater feedback fault |
+| 14 | CoolerFbRemainMs | ms to the cooler feedback fault |
+| 15 | Temp1OorAccumMs | sensor 1 leaky accumulator; fails at ErrorTimeout; frozen once failed |
+| 16 | Temp2OorAccumMs | sensor 2 leaky accumulator |
+| 17 | Temp1OorEventsPerHour | in-range -> out-of-range transitions in the last 60 min |
+| 18 | Temp2OorEventsPerHour | same for sensor 2 |
+| 19 | StatusMirror | status of the last call |
+| 20 | WarningMirror | warning of the last call |
+| 21 | doHeaterMirror | last heater command |
+| 22 | doCoolerMirror | last cooler command |
+| 23 | AppliedFilterPoints | FilterPoints in use |
+| 24 | ZoneInitialized | 1 once a setup has been loaded |
 
-When several apply the first of Stopped, ErrorPending, FilterWarmup, Degraded
-wins, then the control state. The relay commands (15, 16) are always the
-truth about the relays, whatever the status says.
+## 4. Status codes (`TC_ST_*`)
 
-### 3.4 Actions
+| Code | Name | Meaning |
+|---|---|---|
+| 0 | TempCtrlDisabled | disabled or no setup; relays 0, nothing evaluated |
+| 1 | TempAtSetPt | relays off, ControlTemp inside the deadband |
+| 2 | HeaterON | heating commanded (held through the at-setpoint countdown) |
+| 3 | CoolerON | cooling commanded |
+| 4 | HeatPending | relays off, below LoBand, deadband countdown running |
+| 5 | CoolPending | relays off, above HiBand, deadband countdown running |
+| 10 | Temp1FailHigh | fault: single-sensor mode, sensor 1 failed high (incl. NaN/Inf) |
+| 11 | Temp1FailLow | fault: single-sensor mode, sensor 1 failed low |
+| 12 | BothSensorsFailed | fault: two-sensor mode, no healthy sensor left |
+| 13 | TempDisagreeFault | fault: sensors disagreed for TempCompareTimeout |
+| 14 | ConfigFault | fault: config check failed with Enable = 1; only a passing Init clears it |
+| 15 | HeaterFBFault | fault: heater DO feedback mismatched for RelayFeedbackTimeout |
+| 16 | CoolerFBFault | fault: cooler DO feedback mismatched for RelayFeedbackTimeout |
 
-- **Init (0)** — clears everything for the zone: faults, latched bits,
-  timers, filters. Takes the initial relay state from `in[15]`/`in[16]`
-  (heating wins if both are set); sensor 1 becomes active; the current
-  readings enter the filters. Use once at start-up and whenever the process
-  is restarted.
-- **Step (1)** — one control tick. Requires a previous Init.
-- **Reset (2)** — the operator's "acknowledge": clears the stopped state, all
-  latched bits, the timers; relays off; sensor 1 active again. Keeps the
-  filters and the configuration. If a fault condition is still present it
-  is timed again from the first Step that sees it.
+Codes 6-9 and 17+ are reserved. Any code >= 10 (`TC_ST_FAULT_FIRST`) is a
+fault: relays 0, latched, diagnostics frozen, until `TcReset` or `TcInit`.
+The first fault wins; same-tick order: config, sensor range, disagreement,
+heater feedback, cooler feedback.
 
-## 4. Behaviour of Step
+## 5. Warning codes (`TC_WN_*`)
 
-Evaluated in this order on every Step; time comes from `nowMs` differences.
+One value, the lowest active code.
 
-### 4.1 Filtering
+| Code | Name | Set while | Cleared when |
+|---|---|---|---|
+| 0 | NoWarning | | |
+| 1 | Temp1OutOfRange | sensor 1 raw value is out of range now | back in range |
+| 2 | Temp2OutOfRange | corrected sensor 2 is out of range now | back in range |
+| 3 | HeaterFBMismatch | diHeaterFB != previous heater command | they match |
+| 4 | CoolerFBMismatch | diCoolerFB != previous cooler command | they match |
+| 5 | TempDisagree | disagreement held for TempCompareTimeout / 10 | agreement, or the comparison pauses |
+| 6 | RunningOnTemp2 | sensor 1 failed, control on sensor 2 | Reset or Init only (masked by 1-5) |
+| 7 | ConfigInvalid | Init with Enable = 0 failed the config check | the next passing Init |
 
-Each sensor's valid samples (not NaN/Inf) enter a moving average of
-FilterPoints (1..64). The filtered value is NaN until the first valid sample.
-A change of FilterPoints applies immediately (the average uses the last N
-stored samples). `FilterWarmup` is reported until N samples exist. Filters
-keep running while Stopped.
+Warnings never change control; while a zone is stopped the warning freezes.
 
-### 4.2 Sensor rationality and failure
+## 6. Sending the diagnostics on CAN (CanTp)
 
-Per sensor (Temp2 only when Temp2Enable): the condition is *bad* when the raw
-reading is NaN/Inf or no filtered value exists, else *hi* when the filtered
-value is above HiLimit, else *lo* when below LoLimit. A condition held for
-ErrorTimeout ms **fails the sensor**: its bit is set and stays set until
-Reset. Countdowns start at the first Step that observes the condition (that
-tick's dt is not charged) and restart from full whenever the condition
-changes. A sensor that returns inside its limits does *not* un-fail on its
-own (Q3: latched; avoids flapping).
-
-### 4.3 Failover and stop
-
-- Temp2Enable = 0: sensor 1 failed → **Stopped** (relays off, latched).
-- Temp2Enable = 1: the active sensor failed and the other has not →
-  ActiveSensor switches, status **Degraded**, control continues on the other
-  sensor's filtered value. The backup failing while the primary is fine also
-  reports Degraded (backup lost) without switching. Both failed → Stopped.
-- Disabling Temp2 while running on sensor 2 returns control to sensor 1
-  (which, being failed, stops the controller).
-
-### 4.4 Disagreement
-
-With Temp2Enable, both filtered values valid and neither sensor failed:
-`|Temp1f − Temp2f| > Temp2Tolerance` for ErrorTimeout sets DISAGREE
-(latched). The controller keeps running on the active sensor — two readings
-cannot tell which one is wrong. If one sensor later fails its limits, §4.3
-applies.
-
-### 4.5 Control
-
-A raw NaN/Inf on the **active** sensor drops both relays at once (and clears
-the deadband countdown) while its error countdown runs — as v1. Otherwise on
-ControlTemp: heating stays on until ≥ Setpoint, cooling until ≤ Setpoint.
-When idle, above HiBand for DeadbandTimeout → cooling on; below LoBand for
-DeadbandTimeout → heating on. Heating and cooling are mutually exclusive.
-Zero timeouts act on first observation.
-
-### 4.6 Feedback
-
-With FeedbackEnable, HeaterFeedback / CoolerFeedback (> 0.5 = on) are
-compared with the commands issued by the **previous** call (the Init state
-counts as the first command). A mismatch held for ErrorTimeout sets
-HEATER_FB / COOLER_FB; **operation continues** (D4); the bit is latched (Q2).
-
-### 4.7 Configuration check
-
-`TC_WARN_CONFIG` (and bit 9) when any of: DeadbandHi/Lo < 0, `LoLimit <
-LoBand` false, `HiBand < HiLimit` false, ErrorTimeout or DeadbandTimeout < 0,
-Temp2Tolerance < 0, FilterPoints negative or > 64 (clamped to 64), or a NaN
-in any of these. The controller runs anyway; a setpoint band outside the
-limits simply cannot be reached without a fault.
-
-## 5. Sending the state on CAN (CanTp)
+TempCtl does no CAN. The 25-value diagnostics array is, however, exactly
+the message `dbc\tempctl.dbc` defines (PGN 65280, J1939 BAM, 55 bytes, 9
+frames), so the host packs it with CanTp:
 
 ```c
 /* once: the message definition from dbc\tables (or your own DBC through dbc2tables.py) */
 CanTp_Define(0, TempCtl_msgdef, 8, &TempCtl_sigdefs[0][0], TempCtl_NSIG);   /* cantp_tables.h */
 int32_t need = CanTp_OutputSize(0);                                           /* 9 frames x 24 = 216 bytes */
 
-/* every tick */
-TcStep(0, TC_ACTION_STEP, tick, in, 17, out, 27);
-CanTp_PackSgl(0, out, 27, timestamp100ns, spacing100ns, frames, need, &written);
+/* every tick (or every N ticks) */
+TcCheckTemp(0, tick, t1, t2, hfb, cfb, &dh, &dc, &st, &wn);
+TcGetDiag(0, diag, 25);
+CanTp_Pack(0, diag, 25, timestamp100ns, spacing100ns, frames, need, &written);
 /* -> XNET Write (Frame Output Stream, raw), or append to a .ncl after CanTp_NclHeader() */
 ```
 
-The msgdef's source address column (index 4) replaces the DBC's 0xFE
-placeholder with the node's real SA (e.g. 0x80). On the receiving side
-`CanTp_Unpack` (buffer) or `CanTp_RxFeed` (one record per call) return the
-27 values in the same order; NaN outputs (Temp2Filtered while disabled) are
-packed as the J1939 "not available" pattern and decode as the signal's
-maximum raw value.
+NaN diagnostics (Temp2 fields while disabled, ControlTemp during an open
+sensor) are packed as the J1939 "not available" pattern and decode as the
+signal's maximum. Status and warning carry value tables in the DBC. On the
+receiving side `CanTp_Unpack` / `CanTp_RxFeed` return the 25 values in the
+same order. In LabVIEW: `Read Delimited Spreadsheet` on
+`dbc\tables\TempCtl.msg.csv` (1x8) and `TempCtl.sig.csv` (25x8) ->
+`Reshape Array` to 1-D DBL -> `CanTp_Define`; `TempCtl.names.txt` lists the
+order.
 
-In LabVIEW: `Read Delimited Spreadsheet` on `dbc\tables\TempCtl.msg.csv` (1×8)
-and `TempCtl.sig.csv` (27×8) → `Reshape Array` to 1-D DBL → `CanTp_Define`.
-`TempCtl.names.txt` lists the signal order.
+## 7. Timing
 
-## 6. Timing
-
-The library differences successive `nowMs` values (`Tick Count (ms)`), so a
-loop period of 10 ms or 1 s gives the same countdown behaviour. Countdown
-resolution is one loop period. Calling Step less often than ErrorTimeout
-makes faults latch on the second observation.
+The library differences successive `nowMs` values (`Tick Count (ms)`), so
+a loop period of 10 ms or 1 s gives the same countdown behaviour; countdown
+resolution is one loop period. A countdown starts on the tick that first
+observes its condition and expires on a later tick when the elapsed time
+reaches the timeout, so every timeout gives at least one tick of grace. The
+leaky accumulators (`TempxOorAccumMs`) charge every out-of-range tick's
+elapsed time, the first one included, and drain half of every in-range
+tick's elapsed time: a sensor out of range all the time fails at
+`ErrorTimeout`, 75 % of the time at 1.6 x, half the time at about 4 x, a
+third or less never. Because the first tick charges, `ErrorTimeout` must be
+at least two loop periods, or one out-of-range sample fails the sensor. A
+backwards `nowMs` step counts as 0 ms; 2^32 wrap is handled.
