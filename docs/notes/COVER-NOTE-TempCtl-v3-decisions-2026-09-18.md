@@ -2,7 +2,7 @@
 
 To: Scott
 Date: 2026-09-18
-Status: DRAFT, not sent
+Status: sent 2026-09-18
 
 Amendment A is applied (drain 0.5, first-tick charge confirmed, `ErrorTimeout`
 floor documented, header in the package) and every gate was re-run: 1516
