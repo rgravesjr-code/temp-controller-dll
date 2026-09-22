@@ -1,11 +1,19 @@
 /*
- * test_main.c - TempCtl v3.0.0 unit tests, compiled together with
+ * test_main.c - TempCtl v4.0.0 unit tests, compiled together with
  * ../src/tempctl.c (no DLL needed).
  *
- * One function per rule group of TEMPCTL-SPEC-v3.0.0 (R1..R9), plus the
- * change list rows C1..C22 and the required scenarios S1..S15 of the
- * v3.0.0 handoff, named in the comments. Tick period is 100 ms; a countdown
- * observed on tick k expires on tick k + timeout/100.
+ * One function per rule group of TEMPCTL-SPEC-v4.0.0: R1..R9 are the v3
+ * rules (change list rows C1..C22 and scenarios S1..S15 of the v3.0.0
+ * handoff, named in the comments), R10 is the v4 lifecycle; the v4 tests
+ * are labelled with the handoff section 13 item they cover (13.x.y). Tick
+ * period is 100 ms; a countdown observed on tick k expires on tick
+ * k + timeout/100.
+ *
+ * Harness convention: init0()/initz() = TcInit + TcStart(permissive 1) and
+ * rst0()/rstz() = TcReset + TcStart(permissive 1), so every v3 test keeps
+ * its meaning under the v4 lifecycle; oinit0()/orst0() are the raw calls.
+ * Ticks use the global PERM as the live permissive (1 unless a test says
+ * otherwise).
  */
 #include "../src/tempctl.h"
 #include <stdio.h>
@@ -25,9 +33,11 @@ static double   S[TC_SETUP_COUNT];
 static double   DG[TC_DIAG_COUNT];
 static int32_t  DH, DC, ST, WN, RC;
 static uint32_t NOW;
+static int32_t  PERM = 1;                       /* live run permissive used by the tick helpers */
 
 /* Enabled, degC, setpoint 50, band 45..55, limits 0..100, ErrorTimeout 1000,
-   DeadbandTimeout 500, AtSetPtTimeout 300, single sensor, filter 4, no feedback. */
+   DeadbandTimeout 500, AtSetPtTimeout 300, single sensor, filter 4, no feedback,
+   OperatingConditionTimeout 1000. */
 static void base(void)
 {
     memset(S, 0, sizeof S);
@@ -39,22 +49,33 @@ static void base(void)
     S[TC_SETUP_TEMP_COMPARE_TIMEOUT] = 2000;
     S[TC_SETUP_FILTER_POINTS] = 4;
     S[TC_SETUP_FEEDBACK_ENABLE] = 0;   S[TC_SETUP_RELAY_FEEDBACK_TIMEOUT] = 400;
-    DH = DC = 0;
-    /* A re-Init on a running zone keeps its relays (R9.3); every test starts from a reset zone 0. */
+    S[TC_SETUP_OPERATING_CONDITION_TIMEOUT] = 1000;
+    DH = DC = 0; PERM = 1;
+    /* every test starts from a reset (stopped) zone 0 */
     TcReset(0, NOW, &ST, &WN);
 }
 static void two_sensor(void) { S[TC_SETUP_TEMP2_ENABLE] = 1; }
 static void feedback(void)   { S[TC_SETUP_FEEDBACK_ENABLE] = 1; }
 
-static int32_t initz(int z) { RC = TcInit(z, NOW, S, TC_SETUP_COUNT, &ST, &WN); return RC; }
+/* raw calls */
+static int32_t oinitz(int z) { RC = TcInit(z, NOW, S, TC_SETUP_COUNT, &ST, &WN); return RC; }
+static int32_t oinit0(void)  { return oinitz(0); }
+static int32_t orstz(int z)  { RC = TcReset(z, NOW, &ST, &WN); return RC; }
+static int32_t orst0(void)   { return orstz(0); }
+static int32_t startz(int z, int perm) { RC = TcStart(z, NOW, perm, &ST, &WN); return RC; }
+static int32_t start0(int perm)        { return startz(0, perm); }
+static int32_t stopz(int z)  { RC = TcStop(z, NOW, &DH, &DC, &ST, &WN); return RC; }
+static int32_t stop0(void)   { return stopz(0); }
+/* v3-equivalent: Init / Reset followed by a Start with permissive 1 (RC is the Init / Reset result) */
+static int32_t initz(int z) { int32_t rc = oinitz(z); TcStart(z, NOW, 1, &ST, &WN); RC = rc; return rc; }
 static int32_t init0(void)  { return initz(0); }
-static int32_t rstz(int z)  { RC = TcReset(z, NOW, &ST, &WN); return RC; }
+static int32_t rstz(int z)  { int32_t rc = orstz(z); TcStart(z, NOW, 1, &ST, &WN); RC = rc; return rc; }
 static int32_t rst0(void)   { return rstz(0); }
 
-/* One tick on zone z with explicit feedback. */
+/* One tick on zone z with explicit feedback and the global permissive. */
 static int32_t tkz(int z, double t1, double t2, int hfb, int cfb)
 {
-    RC = TcCheckTemp(z, NOW, t1, t2, hfb, cfb, &DH, &DC, &ST, &WN);
+    RC = TcCheckTemp(z, NOW, t1, t2, hfb, cfb, PERM, &DH, &DC, &ST, &WN);
     return RC;
 }
 /* Advance time one period, honest relays (feedback echoes the previous command). */
@@ -83,32 +104,46 @@ static void test_api(void)
 {
     double d[TC_DIAG_COUNT + 5];
     int32_t a = 7, b = 7, c = 7, e = 7;
-    CHECK(TcVersion() == 0x030000);
+    CHECK(TcVersion() == 0x040000);                                      /* 13.1.1 */
     CHECK(TcVersion() == ((TC_VERSION_MAJOR << 16) | (TC_VERSION_MINOR << 8) | TC_VERSION_PATCH));
-    CHECK(TcSetupCount() == 17 && TcSetupCount() == TC_SETUP_COUNT);
-    CHECK(TcDiagCount() == 25 && TcDiagCount() == TC_DIAG_COUNT);
+    CHECK(TcSetupCount() == 18 && TcSetupCount() == TC_SETUP_COUNT);
+    CHECK(TcDiagCount() == 28 && TcDiagCount() == TC_DIAG_COUNT);
 
-    base(); NOW = 1000;
+    base(); NOW = 1000;                                                  /* 13.1.2, 13.1.3 */
     CHECK(TcInit(16, NOW, S, TC_SETUP_COUNT, &a, &b) == TC_ERR_ZONE);
     CHECK(TcInit(-1, NOW, S, TC_SETUP_COUNT, &a, &b) == TC_ERR_ZONE);
     CHECK(TcInit(0, NOW, 0, TC_SETUP_COUNT, &a, &b) == TC_ERR_ARG);
-    CHECK(TcInit(0, NOW, S, 16, &a, &b) == TC_ERR_ARG);
-    CHECK(TcInit(0, NOW, S, 18, &a, &b) == TC_ERR_ARG);
+    CHECK(TcInit(0, NOW, S, 17, &a, &b) == TC_ERR_ARG);                  /* the v3 length is refused */
+    CHECK(TcInit(0, NOW, S, 19, &a, &b) == TC_ERR_ARG);                  /* exact length only (V4-D4) */
     CHECK(TcInit(0, NOW, S, TC_SETUP_COUNT, 0, &b) == TC_ERR_ARG);
     CHECK(TcInit(0, NOW, S, TC_SETUP_COUNT, &a, 0) == TC_ERR_ARG);
     CHECK(a == 7 && b == 7);                               /* nothing written on a negative return */
 
-    CHECK(TcCheckTemp(16, NOW, 50, 50, 0, 0, &a, &b, &c, &e) == TC_ERR_ZONE);
-    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, 0, &b, &c, &e) == TC_ERR_ARG);
-    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, &a, 0, &c, &e) == TC_ERR_ARG);
-    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, &a, &b, 0, &e) == TC_ERR_ARG);
-    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, &a, &b, &c, 0) == TC_ERR_ARG);
+    CHECK(TcCheckTemp(16, NOW, 50, 50, 0, 0, 1, &a, &b, &c, &e) == TC_ERR_ZONE);
+    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, 1, 0, &b, &c, &e) == TC_ERR_ARG);
+    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, 1, &a, 0, &c, &e) == TC_ERR_ARG);
+    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, 1, &a, &b, 0, &e) == TC_ERR_ARG);
+    CHECK(TcCheckTemp(0, NOW, 50, 50, 0, 0, 1, &a, &b, &c, 0) == TC_ERR_ARG);
     CHECK(a == 7 && b == 7 && c == 7 && e == 7);
 
     CHECK(TcReset(99, NOW, &a, &b) == TC_ERR_ZONE);
     CHECK(TcReset(0, NOW, 0, &b) == TC_ERR_ARG);
     CHECK(TcReset(0, NOW, &a, 0) == TC_ERR_ARG);
     CHECK(a == 7 && b == 7);
+
+    CHECK(TcStart(16, NOW, 1, &a, &b) == TC_ERR_ZONE);
+    CHECK(TcStart(-1, NOW, 1, &a, &b) == TC_ERR_ZONE);
+    CHECK(TcStart(0, NOW, 1, 0, &b) == TC_ERR_ARG);
+    CHECK(TcStart(0, NOW, 1, &a, 0) == TC_ERR_ARG);
+    CHECK(a == 7 && b == 7);
+    CHECK(TcStop(16, NOW, &a, &b, &c, &e) == TC_ERR_ZONE);
+    CHECK(TcStop(0, NOW, 0, &b, &c, &e) == TC_ERR_ARG);
+    CHECK(TcStop(0, NOW, &a, 0, &c, &e) == TC_ERR_ARG);
+    CHECK(TcStop(0, NOW, &a, &b, 0, &e) == TC_ERR_ARG);
+    CHECK(TcStop(0, NOW, &a, &b, &c, 0) == TC_ERR_ARG);
+    CHECK(a == 7 && b == 7 && c == 7 && e == 7);
+    /* a refused call changes no state: zone 0 is still uninitialised (base() only Reset it) */
+    CHECK(dg(TC_DIAG_ZONE_INITIALIZED) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
 
     CHECK(TcGetDiag(16, d, TC_DIAG_COUNT) == TC_ERR_ZONE);
     CHECK(TcGetDiag(0, 0, TC_DIAG_COUNT) == TC_ERR_ARG);
@@ -705,12 +740,20 @@ static void test_R8_feedback(void)
     base(); feedback(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; init0();
     for (i = 0; i < 20; i++) tkf(50, 1, 1);
     CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
-    /* R8.3: after Reset the previous command is 0; after a re-Init that keeps the relays it is the kept state */
+    /* R8.3: after Init, Reset, Stop or Start the previous command is 0 (v4 drops the R9.3 relay keeping) */
     base(); feedback(); init0(); tkn(6, 30); CHECK(DH == 1);
-    init0(); CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 1);                   /* running + valid: heater kept */
-    tkf(30, 1, 0); CHECK(DH == 1 && WN == TC_WN_NONE);                   /* feedback 1 matches the kept command */
+    init0(); CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0);                   /* 13.2.2: re-Init no longer keeps the heater */
+    tkf(30, 1, 0); CHECK(DH == 0 && WN == TC_WN_HEATER_FB_MISMATCH);      /* a relay still physically on is a mismatch */
+    tkf(30, 0, 0); CHECK(WN == TC_WN_NONE);
     rst0(); CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0);
     tkf(30, 1, 0); CHECK(DH == 0 && WN == TC_WN_HEATER_FB_MISMATCH);      /* feedback 1 vs previous command 0 */
+    /* 13.4.8 / R10.9: the intentional off transition of a Stop is not a mismatch; a stuck relay after Stop still warns once started */
+    base(); feedback(); init0(); tkn(6, 30); CHECK(DH == 1);
+    stop0(); CHECK(DH == 0 && DC == 0 && ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);
+    for (i = 0; i < 10; i++) { tkf(30, 1, 0); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE && dg(TC_DIAG_HEATER_FB_REMAIN_MS) == 0); }
+    tkf(30, 0, 0); CHECK(WN == TC_WN_NONE);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT);
+    tkf(30, 1, 0); CHECK(WN == TC_WN_HEATER_FB_MISMATCH && dg(TC_DIAG_HEATER_FB_REMAIN_MS) == 400);
     /* any non-zero feedback value means 1 */
     base(); feedback(); init0(); tkn(6, 30);
     tkf(30, 5, 0); CHECK(WN == TC_WN_NONE);
@@ -775,6 +818,10 @@ static void test_R9_config(void)
     bad_setup_faults(TC_SETUP_RELAY_FEEDBACK_TIMEOUT, NAN);
     bad_setup_faults(TC_SETUP_TEMP2_ENABLE, NAN);
     bad_setup_faults(TC_SETUP_FEEDBACK_ENABLE, NAN);
+    bad_setup_faults(TC_SETUP_OPERATING_CONDITION_TIMEOUT, 0);           /* v4 check 8 */
+    bad_setup_faults(TC_SETUP_OPERATING_CONDITION_TIMEOUT, 0.999);
+    bad_setup_faults(TC_SETUP_OPERATING_CONDITION_TIMEOUT, -1);
+    bad_setup_faults(TC_SETUP_OPERATING_CONDITION_TIMEOUT, NAN);
     /* both deadbands zero */
     base(); S[TC_SETUP_DEADBAND_HI] = 0; S[TC_SETUP_DEADBAND_LO] = 0; init0(); CHECK(ST == TC_ST_CONFIG_FAULT);
     /* one zero deadband is allowed */
@@ -791,15 +838,19 @@ static void test_R9_config(void)
     base(); two_sensor(); feedback();
     S[TC_SETUP_ERROR_TIMEOUT] = 1; S[TC_SETUP_DEADBAND_TIMEOUT] = 1; S[TC_SETUP_AT_SETPT_TIMEOUT] = 1.9;
     S[TC_SETUP_TEMP_COMPARE_TIMEOUT] = 1; S[TC_SETUP_RELAY_FEEDBACK_TIMEOUT] = 1; S[TC_SETUP_TEMP2_TOLERANCE] = 0;
+    S[TC_SETUP_OPERATING_CONDITION_TIMEOUT] = 1;
     init0(); CHECK(ST == TC_ST_TEMP_AT_SETPT);
     /* a 1 ms timeout still needs a later tick (one tick of grace) */
     tk2(30, 30); CHECK(ST == TC_ST_HEAT_PENDING && DH == 0);
     tk2(30, 30); CHECK(DH == 1);
-    /* the config check at Init while running: a failing setup stops the zone, relays 0 (R9.3) */
+    /* the config check at Init while running: a failing setup faults the zone, relays 0 */
     heat_on(30);
     S[TC_SETUP_HI_LIMIT] = 10; init0();
-    CHECK(ST == TC_ST_CONFIG_FAULT && dg(TC_DIAG_DO_HEATER_MIRROR) == 0);
+    CHECK(ST == TC_ST_CONFIG_FAULT && dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
     tk(30); CHECK(DH == 0);
+    start0(1); CHECK(ST == TC_ST_CONFIG_FAULT);                          /* Start cannot lift a config fault */
+    /* huge operating-condition timeout: accepted */
+    base(); S[TC_SETUP_OPERATING_CONDITION_TIMEOUT] = 1e12; init0(); CHECK(ST == TC_ST_TEMP_AT_SETPT);
     /* huge timeouts are accepted and saturate rather than wrap */
     base(); S[TC_SETUP_ERROR_TIMEOUT] = 1e12; init0(); CHECK(ST == TC_ST_TEMP_AT_SETPT);
     tkn(50, NAN); CHECK(ST == TC_ST_TEMP_AT_SETPT);
@@ -811,24 +862,26 @@ static void test_R9_config(void)
 static void test_R9_init_reset(void)
 {
     int i;
-    /* S2: setpoint change by re-Init while heating keeps the heater, control continues to the new setpoint */
+    /* S2 (v4 form, 13.2.2): a setpoint change by re-Init while heating drops the heater and leaves the zone
+       stopped; control continues to the new setpoint only after Start. The v3 relay keeping (R9.3) is gone. */
     heat_on(30);
     tk(52); tk(52); CHECK(dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 200);
-    S[TC_SETUP_SETPOINT] = 60; init0();
-    CHECK(ST == TC_ST_HEATER_ON && dg(TC_DIAG_DO_HEATER_MIRROR) == 1 && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 0);
-    tk(52); CHECK(DH == 1 && ST == TC_ST_HEATER_ON && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 0);   /* 52 < 60: keeps heating */
+    S[TC_SETUP_SETPOINT] = 60; oinit0();
+    CHECK(ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 0);
+    tk(52); CHECK(DH == 0 && ST == TC_ST_IDLE_STOPPED);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT);
+    tk(52); CHECK(DH == 0 && ST == TC_ST_HEAT_PENDING);                 /* 52 < LoBand 55 */
+    tkn(5, 52); CHECK(DH == 1 && ST == TC_ST_HEATER_ON);
     tk(60); CHECK(DH == 1 && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 300);
     tk(60); tk(60); tk(60); CHECK(DH == 0 && ST == TC_ST_TEMP_AT_SETPT);
-    /* re-Init while heating where the new logic drops the relay: setpoint moved below the temperature */
+    /* re-Init while heating with the setpoint moved below the temperature: the relay is dropped, not held */
     heat_on(30);
-    S[TC_SETUP_SETPOINT] = 20; init0(); CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 1);
-    tk(30); CHECK(DH == 1);                                              /* 30 >= 20: at-setpoint observed */
-    tk(30); tk(30); CHECK(DH == 1); tk(30); CHECK(DH == 0);
-    tk(30); CHECK(ST == TC_ST_COOL_PENDING);
-    /* cooler kept as well */
+    S[TC_SETUP_SETPOINT] = 20; init0(); CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && ST == TC_ST_TEMP_AT_SETPT);
+    tk(30); CHECK(DH == 0 && ST == TC_ST_COOL_PENDING);                 /* 30 > HiBand 25 */
+    /* cooler dropped as well */
     base(); init0(); tkn(6, 70); CHECK(DC == 1);
-    S[TC_SETUP_SETPOINT] = 40; init0(); CHECK(ST == TC_ST_COOLER_ON && dg(TC_DIAG_DO_COOLER_MIRROR) == 1);
-    tk(70); CHECK(DC == 1);
+    S[TC_SETUP_SETPOINT] = 40; oinit0(); CHECK(ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DO_COOLER_MIRROR) == 0);
+    tk(70); CHECK(DC == 0 && ST == TC_ST_IDLE_STOPPED);
     /* re-Init with Enable = 0 drops the relays */
     heat_on(30);
     S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; init0(); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && dg(TC_DIAG_DO_HEATER_MIRROR) == 0);
@@ -841,8 +894,8 @@ static void test_R9_init_reset(void)
     heat_on(30);
     S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; init0();
     S[TC_SETUP_TEMP_CTRL_ENABLE] = 1; init0(); CHECK(ST == TC_ST_TEMP_AT_SETPT && dg(TC_DIAG_DO_HEATER_MIRROR) == 0);
-    /* first Init after power-up: relays off */
-    base(); initz(7); CHECK(ST == TC_ST_TEMP_AT_SETPT && dgz(7, TC_DIAG_DO_HEATER_MIRROR) == 0 && dgz(7, TC_DIAG_DO_COOLER_MIRROR) == 0);
+    /* first Init after power-up: relays off, stopped */
+    base(); oinitz(7); CHECK(ST == TC_ST_IDLE_STOPPED && dgz(7, TC_DIAG_DO_HEATER_MIRROR) == 0 && dgz(7, TC_DIAG_DO_COOLER_MIRROR) == 0);
     /* R9.1: Init clears everything */
     base(); two_sensor(); init0(); tk2(50, 50);
     tk2n(10, NAN, 50); tk2n(4, 50, 60); tk2n(3, 50, 200); tk2(50, 50);
@@ -888,7 +941,7 @@ static void test_R9_fault_behaviour(void)
     double snap[TC_DIAG_COUNT];
     int i;
     /* warning freezes at the value of the fault tick; countdowns and accumulators stop */
-    heat_on(30); two_sensor(); feedback(); init0();                      /* keeps the heater (running, valid) */
+    base(); two_sensor(); feedback(); init0(); tk2n(6, 30, 30); CHECK(DH == 1);
     tk2n(10, NAN, 30); CHECK(DH == 1 && dg(TC_DIAG_ACTIVE_SENSOR) == 2 && WN == TC_WN_TEMP1_OUT_OF_RANGE);
     tk2(30, 30); CHECK(WN == TC_WN_RUNNING_ON_TEMP2);
     tk2(30, 52); tk2(30, 52); CHECK(dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 200);
@@ -996,15 +1049,16 @@ static void test_two_zones(void)
     run_zone_solo(0, 0, 50, solo0, N);
     run_zone_solo(1, 1, 80, solo1, N);
     /* interleaved: same setups, same stimuli, alternated in one tick */
-    base(); S[TC_SETUP_SETPOINT] = 50; S[TC_SETUP_HI_LIMIT] = 150; NOW = 0; rstz(0); initz(0);
+    /* zone 1 first: base() resets zone 0, which under v4 would stop it again */
     base(); two_sensor(); S[TC_SETUP_SETPOINT] = 80; S[TC_SETUP_HI_LIMIT] = 150; NOW = 0; rstz(1); initz(1);
+    base(); S[TC_SETUP_SETPOINT] = 50; S[TC_SETUP_HI_LIMIT] = 150; NOW = 0; rstz(0); initz(0);
     for (i = 0; i < N; i++) {
         double t1a = (i < 10) ? 30 : (i < 30) ? 50 : (i < 45) ? NAN : 50, t2a = (i < 10) ? 32 : 51;
         double t1b = (i < 10) ? 30 : (i < 30) ? 80 : (i < 45) ? NAN : 80, t2b = (i < 10) ? 32 : 81;
         NOW = (uint32_t)((i + 1) * 100);
-        TcCheckTemp(0, NOW, t1a, t2a, dh0, dc0, &dh0, &dc0, &ST, &WN);
+        TcCheckTemp(0, NOW, t1a, t2a, dh0, dc0, 1, &dh0, &dc0, &ST, &WN);
         mix0[i].dh = dh0; mix0[i].dc = dc0; mix0[i].st = ST; mix0[i].wn = WN; mix0[i].ctrl = dgz(0, TC_DIAG_CONTROL_TEMP);
-        TcCheckTemp(1, NOW, t1b, t2b, dh1, dc1, &dh1, &dc1, &ST, &WN);
+        TcCheckTemp(1, NOW, t1b, t2b, dh1, dc1, 1, &dh1, &dc1, &ST, &WN);
         mix1[i].dh = dh1; mix1[i].dc = dc1; mix1[i].st = ST; mix1[i].wn = WN; mix1[i].ctrl = dgz(1, TC_DIAG_CONTROL_TEMP);
     }
     for (i = 0; i < N; i++) {
@@ -1059,7 +1113,8 @@ static void test_diag_readonly(void)
     CHECK(DG[TC_DIAG_STATUS_MIRROR] == TC_ST_HEATER_ON && DG[TC_DIAG_WARNING_MIRROR] == TC_WN_TEMP2_OUT_OF_RANGE);
     CHECK(DG[TC_DIAG_DO_HEATER_MIRROR] == 1 && DG[TC_DIAG_DO_COOLER_MIRROR] == 0);
     CHECK(DG[TC_DIAG_APPLIED_FILTER_POINTS] == 3 && DG[TC_DIAG_ZONE_INITIALIZED] == 1);
-    /* the buffer beyond TC_DIAG_COUNT is untouched */
+    CHECK(DG[TC_DIAG_RUN_PERMISSIVE] == 1 && DG[TC_DIAG_OPERATING_CONDITION_REMAIN_MS] == 0 && DG[TC_DIAG_CONTROLLER_STARTED] == 1);
+    /* the buffer beyond TC_DIAG_COUNT is untouched (13.1.5) */
     {
         double big[TC_DIAG_COUNT + 2]; big[TC_DIAG_COUNT] = 12345; big[TC_DIAG_COUNT + 1] = 54321;
         CHECK(TcGetDiag(0, big, TC_DIAG_COUNT + 2) == TC_OK && big[TC_DIAG_COUNT] == 12345 && big[TC_DIAG_COUNT + 1] == 54321);
@@ -1067,6 +1122,449 @@ static void test_diag_readonly(void)
     /* Init and Reset mirrors before the first CheckTemp */
     base(); init0(); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_TEMP_AT_SETPT && ISNAN(dg(TC_DIAG_CONTROL_TEMP)) && ISNAN(dg(TC_DIAG_TEMP1_RAW)));
     tk(50); rst0(); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_TEMP_AT_SETPT && ISNAN(dg(TC_DIAG_CONTROL_TEMP)));
+}
+
+/* ----------------------------------------------------------------------- */
+/* R10.2 / R10.5 Init and Reset leave the zone stopped  (13.2)             */
+/* ----------------------------------------------------------------------- */
+static void test_R10_init_reset(void)
+{
+    int i;
+    /* 13.2.1 valid enabled Init: IdleStopped, relays off, Started 0, permissive NaN */
+    base(); oinit0();
+    CHECK(RC == TC_OK && ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);
+    CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_DO_COOLER_MIRROR) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
+    CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)) && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED && dg(TC_DIAG_WARNING_MIRROR) == 0);
+    /* CheckTemp alone never starts control */
+    for (i = 0; i < 20; i++) { tk(30); CHECK(RC == TC_OK && ST == TC_ST_IDLE_STOPPED && DH == 0 && DC == 0 && WN == TC_WN_NONE); }
+    CHECK(dg(TC_DIAG_DEADBAND_REMAIN_MS) == 0 && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 0 && ISNAN(dg(TC_DIAG_CONTROL_TEMP)));
+    CHECK(dg(TC_DIAG_TEMP1_RAW) == 30 && ISNAN(dg(TC_DIAG_TEMP1_AVG)));     /* V4-D1: raw mirrored, nothing evaluated */
+    CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1 && dg(TC_DIAG_INITIAL_HC_FLAG) == 0);
+    /* stopped ticks evaluate nothing: an out-of-range stream neither warns nor fails the sensor */
+    for (i = 0; i < 20; i++) { tk(NAN); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE); }
+    CHECK(dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 0 && dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0 && ISNAN(dg(TC_DIAG_TEMP1_RAW)));
+    start0(1); tk(50); CHECK(ST == TC_ST_TEMP_AT_SETPT && WN == TC_WN_NONE);
+    /* 13.2.2 Init while heating drops the relay and stops */
+    heat_on(30);
+    S[TC_SETUP_SETPOINT] = 60; oinit0();
+    CHECK(ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
+    tk(30); CHECK(DH == 0 && ST == TC_ST_IDLE_STOPPED);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT);
+    tk(30); CHECK(ST == TC_ST_HEAT_PENDING && DH == 0 && dg(TC_DIAG_HI_BAND) == 65);   /* new setup, fresh countdown */
+    tkn(5, 30); CHECK(DH == 1);
+    /* 13.2.11 a direct Init / Reset clears the internal commands (mirrors 0) although it returns none */
+    heat_on(30); orst0(); CHECK(ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_DO_COOLER_MIRROR) == 0);
+    base(); init0(); tkn(6, 70); CHECK(DC == 1); oinit0(); CHECK(dg(TC_DIAG_DO_COOLER_MIRROR) == 0 && ST == TC_ST_IDLE_STOPPED);
+    /* 13.2.8 Reset leaves the controller stopped; CheckTemp alone cannot resume it */
+    base(); init0(); tk(50); tkn(10, NAN); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH);
+    orst0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE && dg(TC_DIAG_CONTROLLER_STARTED) == 0 && ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)));
+    for (i = 0; i < 10; i++) { tk(30); CHECK(ST == TC_ST_IDLE_STOPPED && DH == 0); }
+    start0(1); tk(30); CHECK(ST == TC_ST_HEAT_PENDING);
+    /* 13.2.9 ConfigFault survives Reset, Start and Stop */
+    base(); S[TC_SETUP_DEADBAND_HI] = -1; oinit0(); CHECK(ST == TC_ST_CONFIG_FAULT);
+    orst0(); CHECK(ST == TC_ST_CONFIG_FAULT); start0(1); CHECK(ST == TC_ST_CONFIG_FAULT && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
+    stop0(); CHECK(ST == TC_ST_CONFIG_FAULT && DH == 0 && DC == 0);
+    tk(30); CHECK(ST == TC_ST_CONFIG_FAULT && DH == 0);
+    /* disabled Init and Reset: TempCtrlDisabled */
+    base(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; oinit0(); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
+    orst0(); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
+    /* 13.2.10 host sequences: Stop -> apply zeros -> Init, and Stop -> apply zeros -> Reset; both leave IdleStopped */
+    heat_on(30);
+    stop0(); CHECK(DH == 0 && DC == 0 && ST == TC_ST_IDLE_STOPPED);
+    S[TC_SETUP_SETPOINT] = 55; oinit0(); CHECK(ST == TC_ST_IDLE_STOPPED);
+    tk(30); CHECK(ST == TC_ST_IDLE_STOPPED && DH == 0);
+    start0(1); tkn(6, 30); CHECK(DH == 1 && dg(TC_DIAG_LO_BAND) == 50);
+    stop0(); CHECK(DH == 0);
+    orst0(); CHECK(ST == TC_ST_IDLE_STOPPED);
+    tk(30); CHECK(ST == TC_ST_IDLE_STOPPED && DH == 0);
+    /* Reset clears the blocked and tripped lifecycle states */
+    base(); oinit0(); start0(0); CHECK(ST == TC_ST_IDLE_START_BLOCKED);
+    orst0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);
+    heat_on(30); PERM = 0; tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING);
+    PERM = 1; tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);
+    orst0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    heat_on(30); PERM = 0; tk(30); tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 900);
+    orst0(); CHECK(ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    PERM = 1; tkn(20, 30); CHECK(ST == TC_ST_IDLE_STOPPED);
+}
+
+/* ----------------------------------------------------------------------- */
+/* R10.3 Start  (13.2.3 - 13.2.5, 13.3)                                    */
+/* ----------------------------------------------------------------------- */
+static void test_R10_start(void)
+{
+    int i;
+    /* 13.2.3 uninitialised / disabled zones cannot start */
+    NOW = 1000; DH = DC = 5;
+    CHECK(startz(11, 1) == TC_OK && ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
+    CHECK(dgz(11, TC_DIAG_ZONE_INITIALIZED) == 0 && dgz(11, TC_DIAG_CONTROLLER_STARTED) == 0 && ISNAN(dgz(11, TC_DIAG_RUN_PERMISSIVE)));
+    tkz(11, 30, 30, 0, 0); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && DH == 0 && DC == 0);
+    base(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; oinit0();
+    CHECK(start0(1) == TC_OK && ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
+    tk(30); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && DH == 0);
+    CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)));                              /* 13.6.6: disabled calls do not record it */
+    /* disabled with ConfigInvalid keeps that warning through Start and Stop */
+    base(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; S[TC_SETUP_DEADBAND_HI] = -1; oinit0();
+    start0(1); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_CONFIG_INVALID);
+    stop0();   CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_CONFIG_INVALID && DH == 0 && DC == 0);
+    /* 13.2.4 accepted Start: Started 1, relays stay 0 until a qualified CheckTemp decision */
+    base(); oinit0(); NOW = 5000;
+    CHECK(start0(1) == TC_OK && ST == TC_ST_TEMP_AT_SETPT && WN == TC_WN_NONE);
+    CHECK(dg(TC_DIAG_CONTROLLER_STARTED) == 1 && dg(TC_DIAG_RUN_PERMISSIVE) == 1 && dg(TC_DIAG_DO_HEATER_MIRROR) == 0);
+    CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_TEMP_AT_SETPT && ISNAN(dg(TC_DIAG_CONTROL_TEMP)));
+    tk(30); CHECK(ST == TC_ST_HEAT_PENDING && DH == 0 && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    tkn(4, 30); CHECK(DH == 0);
+    tk(30); CHECK(DH == 1 && ST == TC_ST_HEATER_ON);
+    /* 13.2.5 / 13.4.15 Start while started is a no-op: no countdown restart, no permissive evaluation, no time re-base */
+    base(); init0(); tk(30); tk(30); tk(30); CHECK(dg(TC_DIAG_DEADBAND_REMAIN_MS) == 300);
+    CHECK(start0(1) == TC_OK && ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 300);
+    CHECK(start0(0) == TC_OK && ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 300 && dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    NOW += 5000; start0(1); CHECK(dg(TC_DIAG_DEADBAND_REMAIN_MS) == 300);
+    tk(30); CHECK(DH == 1);                                                /* 5.1 s >= the 300 ms left */
+    heat_on(30); tk(52); tk(52); CHECK(dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 200);
+    start0(1); CHECK(ST == TC_ST_HEATER_ON && DH == 1 && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 200 && dg(TC_DIAG_DO_HEATER_MIRROR) == 1);
+    tk(52); CHECK(DH == 1 && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 100);
+    tk(52); CHECK(DH == 0 && ST == TC_ST_TEMP_AT_SETPT);
+    /* ... and the next CheckTemp performs the live safety action */
+    heat_on(30); start0(0); CHECK(DH == 1 && ST == TC_ST_HEATER_ON);
+    PERM = 0; tk(30); CHECK(DH == 0 && DC == 0 && ST == TC_ST_OPERATING_CONDITION_PENDING);
+    /* 13.3.1 blocked Start: TC_OK, IdleStartBlocked, warning 8, relays 0, no countdown */
+    base(); oinit0(); NOW = 0;
+    CHECK(start0(0) == TC_OK && ST == TC_ST_IDLE_START_BLOCKED && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    CHECK(dg(TC_DIAG_CONTROLLER_STARTED) == 0 && dg(TC_DIAG_RUN_PERMISSIVE) == 0 && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_DO_COOLER_MIRROR) == 0);
+    /* 13.3.2 repeated CheckTemp while false: no promotion, ever */
+    PERM = 0;
+    for (i = 0; i < 50; i++) { tk(30); CHECK(ST == TC_ST_IDLE_START_BLOCKED && WN == TC_WN_OPERATING_CONDITION_NOT_MET && DH == 0 && DC == 0); }
+    CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0 && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 0);
+    NOW += 3600000u; tk(30); CHECK(ST == TC_ST_IDLE_START_BLOCKED);
+    /* 13.3.3 recovery does not auto-start; warning 8 clears live, status 7 stays */
+    PERM = 1;
+    for (i = 0; i < 20; i++) { tk(30); CHECK(ST == TC_ST_IDLE_START_BLOCKED && WN == TC_WN_NONE && DH == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0); }
+    CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    PERM = 0; tk(30); CHECK(WN == TC_WN_OPERATING_CONDITION_NOT_MET);    /* and back */
+    PERM = 1;
+    start0(0); CHECK(ST == TC_ST_IDLE_START_BLOCKED && WN == TC_WN_OPERATING_CONDITION_NOT_MET);   /* still blocked */
+    /* 13.3.4 a later successful Start clears the blocked status */
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT && WN == TC_WN_NONE && dg(TC_DIAG_CONTROLLER_STARTED) == 1);
+    tk(30); CHECK(ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    /* 13.3.5 Stop acknowledges a blocked Start */
+    base(); oinit0(); start0(0); CHECK(ST == TC_ST_IDLE_START_BLOCKED);
+    stop0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE && DH == 0 && DC == 0);
+    PERM = 0; tk(30); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);   /* IdleStopped never warns 8 */
+    PERM = 1;
+    /* Start from IdleStopped after a normal Stop */
+    heat_on(30); stop0(); CHECK(ST == TC_ST_IDLE_STOPPED);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT); tk(30); CHECK(ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    /* Start preserves sensor failure / failover, accumulators and hourly counts; clears averages and Initial_HC_Flag (13.2.7, 13.6.7) */
+    base(); two_sensor(); init0(); tk2n(4, 50, 50); CHECK(dg(TC_DIAG_INITIAL_HC_FLAG) == 1);
+    tk2n(10, NAN, 50); tk2(50, 50); CHECK(dg(TC_DIAG_ACTIVE_SENSOR) == 2 && WN == TC_WN_RUNNING_ON_TEMP2);
+    tk2(50, 200); tk2(50, 50); CHECK(dg(TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR) == 1 && dg(TC_DIAG_TEMP2_OOR_ACCUM_MS) == 50);
+    stop0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_RUNNING_ON_TEMP2);
+    CHECK(dg(TC_DIAG_ACTIVE_SENSOR) == 2 && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 1000 && dg(TC_DIAG_TEMP2_OOR_ACCUM_MS) == 50);
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1 && dg(TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR) == 1);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT && WN == TC_WN_RUNNING_ON_TEMP2);
+    CHECK(dg(TC_DIAG_ACTIVE_SENSOR) == 2 && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 1000 && dg(TC_DIAG_TEMP2_OOR_ACCUM_MS) == 50);
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1 && dg(TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR) == 1);
+    CHECK(ISNAN(dg(TC_DIAG_TEMP1_AVG)) && ISNAN(dg(TC_DIAG_TEMP2_AVG)) && dg(TC_DIAG_INITIAL_HC_FLAG) == 0);
+    tk2(50, 50); CHECK(dg(TC_DIAG_ACTIVE_SENSOR) == 2 && WN == TC_WN_RUNNING_ON_TEMP2 && ST == TC_ST_TEMP_AT_SETPT);
+    CHECKF(dg(TC_DIAG_TEMP2_AVG), 50);                                    /* the average restarts from the new samples */
+    /* hourly counts age in wall time across a Stop (at the Start, and on stopped ticks) */
+    base(); init0(); tk(50); tk(200); tk(50); CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1);
+    stop0(); NOW += 61u * 60000u; start0(1); CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0);
+    tk(50); CHECK(ST == TC_ST_TEMP_AT_SETPT && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 0);
+    base(); init0(); tk(50); tk(200); tk(50); stop0(); CHECK(dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 50);
+    for (i = 0; i < 61; i++) { NOW += 60000u; tk(50); }
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0 && ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 50);   /* the accumulator does not drain while stopped */
+}
+
+/* ----------------------------------------------------------------------- */
+/* R10.4 Stop  (13.2.6, 13.2.7, 13.6.8, 13.6.9)                            */
+/* ----------------------------------------------------------------------- */
+static void test_R10_stop(void)
+{
+    int i;
+    /* 13.2.6 Stop from every active status returns 0/0 and IdleStopped */
+    base(); init0(); tk(50); CHECK(ST == TC_ST_TEMP_AT_SETPT);
+    DH = DC = 5; stop0(); CHECK(RC == TC_OK && DH == 0 && DC == 0 && ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);
+    base(); init0(); tk(30); tk(30); CHECK(ST == TC_ST_HEAT_PENDING);
+    stop0(); CHECK(DH == 0 && DC == 0 && ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 0);
+    heat_on(30); tk(52); CHECK(dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 300);
+    stop0(); CHECK(DH == 0 && DC == 0 && ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_AT_SETPT_REMAIN_MS) == 0);
+    CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0 && dg(TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED);
+    base(); init0(); tk(70); tk(70); CHECK(ST == TC_ST_COOL_PENDING); stop0(); CHECK(DC == 0 && ST == TC_ST_IDLE_STOPPED);
+    base(); init0(); tkn(6, 70); CHECK(DC == 1 && ST == TC_ST_COOLER_ON);
+    stop0(); CHECK(DH == 0 && DC == 0 && ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DO_COOLER_MIRROR) == 0);
+    /* after the Stop nothing runs; a Start is needed; stopped time is excluded (13.5.5) */
+    for (i = 0; i < 10; i++) { tk(70); CHECK(ST == TC_ST_IDLE_STOPPED && DC == 0); }
+    NOW += 100000; start0(1); tk(70); CHECK(ST == TC_ST_COOL_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    /* Stop from IdleStopped stays IdleStopped; Stop is idempotent */
+    stop0(); stop0(); CHECK(ST == TC_ST_IDLE_STOPPED && DH == 0 && DC == 0);
+    /* 13.6.9 Stop from an uninitialised zone */
+    DH = DC = 5; ST = WN = 5; CHECK(stopz(12) == TC_OK && DH == 0 && DC == 0 && ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
+    CHECK(dgz(12, TC_DIAG_ZONE_INITIALIZED) == 0);
+    /* ... from a disabled zone, with and without ConfigInvalid */
+    base(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; oinit0(); stop0(); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
+    base(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; S[TC_SETUP_LO_LIMIT] = 60; oinit0(); stop0(); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_CONFIG_INVALID);
+    /* ... from a faulted zone: fault and frozen warning kept, never cleared by Stop */
+    base(); init0(); tk(50); tkn(10, NAN); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH && WN == TC_WN_TEMP1_OUT_OF_RANGE);
+    stop0(); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH && WN == TC_WN_TEMP1_OUT_OF_RANGE && DH == 0 && DC == 0);
+    tk(50); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH && WN == TC_WN_TEMP1_OUT_OF_RANGE);
+    /* 13.6.8 ordinary Stop clears transient warnings 1..5 */
+    base(); init0(); tk(50); tk(200); CHECK(WN == TC_WN_TEMP1_OUT_OF_RANGE);
+    stop0(); CHECK(WN == TC_WN_NONE && ST == TC_ST_IDLE_STOPPED);
+    CHECK(dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 100 && dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1);   /* the history itself is kept (13.2.7) */
+    base(); two_sensor(); init0(); tk2(50, 50); tk2(50, 200); CHECK(WN == TC_WN_TEMP2_OUT_OF_RANGE);
+    stop0(); CHECK(WN == TC_WN_NONE);
+    base(); feedback(); init0(); tk(50); tkf(50, 1, 0); CHECK(WN == TC_WN_HEATER_FB_MISMATCH);
+    stop0(); CHECK(WN == TC_WN_NONE && dg(TC_DIAG_HEATER_FB_REMAIN_MS) == 0);
+    base(); feedback(); init0(); tk(50); tkf(50, 0, 1); CHECK(WN == TC_WN_COOLER_FB_MISMATCH);
+    stop0(); CHECK(WN == TC_WN_NONE && dg(TC_DIAG_COOLER_FB_REMAIN_MS) == 0);
+    base(); two_sensor(); S[TC_SETUP_FILTER_POINTS] = 1; init0(); tk2(50, 50); tk2n(3, 50, 60); CHECK(WN == TC_WN_TEMP_DISAGREE);
+    stop0(); CHECK(WN == TC_WN_NONE && dg(TC_DIAG_COMPARE_REMAIN_MS) == 0);
+    /* ... but RunningOnTemp2 persists (v3 rule) */
+    base(); two_sensor(); init0(); tk2(50, 50); tk2n(10, NAN, 50); tk2(50, 50); CHECK(WN == TC_WN_RUNNING_ON_TEMP2);
+    stop0(); CHECK(WN == TC_WN_RUNNING_ON_TEMP2 && ST == TC_ST_IDLE_STOPPED);
+    tk2(50, 50); CHECK(WN == TC_WN_RUNNING_ON_TEMP2 && ST == TC_ST_IDLE_STOPPED);
+    /* Stop leaves the RunPermissive diagnostic unchanged */
+    base(); init0(); tk(50); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1); stop0(); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    base(); oinit0(); CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE))); stop0(); CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)));
+    /* Stop does not evaluate a permissive: a later Start does */
+    base(); oinit0(); stop0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);
+    start0(0); CHECK(ST == TC_ST_IDLE_START_BLOCKED); start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT);
+}
+
+/* ----------------------------------------------------------------------- */
+/* R10.7 / R10.8 permissive loss during control  (13.4)                    */
+/* ----------------------------------------------------------------------- */
+static void test_R10_permissive_loss(void)
+{
+    int i;
+    double snap[TC_DIAG_COUNT];
+    /* 13.4.1 first false sample: both relays 0 at once, pending, full timeout, Started 0 */
+    heat_on(30); PERM = 0;
+    tk(30); CHECK(DH == 0 && DC == 0 && ST == TC_ST_OPERATING_CONDITION_PENDING && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 1000 && dg(TC_DIAG_CONTROLLER_STARTED) == 0 && dg(TC_DIAG_RUN_PERMISSIVE) == 0);
+    CHECK(dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && dg(TC_DIAG_STATUS_MIRROR) == TC_ST_OPERATING_CONDITION_PENDING);
+    /* the same from a running cooler and from the pending / at-setpoint states */
+    base(); init0(); tkn(6, 70); CHECK(DC == 1); PERM = 0; tk(70); CHECK(DC == 0 && DH == 0 && ST == TC_ST_OPERATING_CONDITION_PENDING);
+    base(); init0(); tk(30); tk(30); PERM = 0; tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 0);
+    base(); init0(); tk(50); PERM = 0; tk(50); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING);
+    /* 13.4.2 one-tick loss then recovery: tripped, no fault, no restart; warning 8 clears live (13.6.2) */
+    heat_on(30); PERM = 0; tk(30); PERM = 1;
+    tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE && DH == 0 && DC == 0);
+    CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0 && dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    for (i = 0; i < 50; i++) { tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && DH == 0 && WN == TC_WN_NONE); }
+    CHECK(dg(TC_DIAG_TEMP1_RAW) == 30 && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 0);
+    PERM = 0; tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_OPERATING_CONDITION_NOT_MET && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    tkn(30, 30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);    /* a false permissive while tripped never counts down */
+    PERM = 1; tk(30); CHECK(WN == TC_WN_NONE && ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);
+    /* 13.3.6 / 13.4.7 a refused Start from tripped keeps the trip cause; 13.4.6 a successful Start clears it */
+    start0(0); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE);   /* PERM is 1 again */
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT && WN == TC_WN_NONE && dg(TC_DIAG_CONTROLLER_STARTED) == 1);
+    tk(30); CHECK(ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    tkn(5, 30); CHECK(DH == 1);
+    /* 13.4.3 false held continuously: fault on the exact qualified tick (observation tick + 10) */
+    heat_on(30); PERM = 0;
+    tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 1000);
+    for (i = 9; i >= 1; i--) { tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && WN == TC_WN_OPERATING_CONDITION_NOT_MET && DH == 0 && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 100.0 * i); }
+    tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT && WN == TC_WN_OPERATING_CONDITION_NOT_MET && DH == 0 && DC == 0);
+    CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 0 && TC_ST_OPERATING_CONDITION_FAULT >= TC_ST_FAULT_FIRST);
+    /* 13.4.11 / 13.6.3 latched, warning frozen; later permissive changes, Start and Stop change nothing */
+    TcGetDiag(0, snap, TC_DIAG_COUNT);
+    PERM = 1; for (i = 0; i < 20; i++) { tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT && WN == TC_WN_OPERATING_CONDITION_NOT_MET && DH == 0); }
+    start0(1); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    stop0();   CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT && WN == TC_WN_OPERATING_CONDITION_NOT_MET && DH == 0 && DC == 0);
+    TcGetDiag(0, DG, TC_DIAG_COUNT); CHECK(memcmp(snap, DG, sizeof snap) == 0);   /* RunPermissive frozen at 0 too */
+    CHECK(DG[TC_DIAG_RUN_PERMISSIVE] == 0);
+    /* Reset clears it and leaves the zone stopped; Start then works */
+    orst0(); CHECK(ST == TC_ST_IDLE_STOPPED && WN == TC_WN_NONE);
+    tk(30); CHECK(ST == TC_ST_IDLE_STOPPED); start0(1); tk(30); CHECK(ST == TC_ST_HEAT_PENDING);
+    /* 13.4.4 recovery one tick before the timeout cancels the fault */
+    heat_on(30); PERM = 0; tk(30); tkn(9, 30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 100);
+    PERM = 1; tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    PERM = 0; tkn(20, 30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);   /* no second countdown from the tripped state */
+    PERM = 1;
+    /* 13.4.5 Stop during pending cancels the escalation and keeps the cause; warning 8 retained while the last permissive was false (13.6.8) */
+    heat_on(30); PERM = 0; tk(30); tk(30); tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800);
+    stop0(); CHECK(DH == 0 && DC == 0 && ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0);
+    for (i = 0; i < 30; i++) { tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_OPERATING_CONDITION_NOT_MET); }
+    PERM = 1; tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE);
+    stop0(); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE);   /* Stop from tripped keeps the cause */
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT);
+    /* Stop from pending when the last evaluated permissive was true: no warning 8 */
+    heat_on(30); PERM = 0; tk(30); PERM = 1; tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);
+    stop0(); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE);
+    /* 13.4.13 Start with false permissive while pending: pending kept, countdown and time reference untouched */
+    heat_on(30); PERM = 0; tk(30); tk(30); tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800);
+    start0(0); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && WN == TC_WN_OPERATING_CONDITION_NOT_MET && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800);
+    NOW += 250; start0(0); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800 && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
+    tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 450);     /* 250 + 100 ms since the last CheckTemp */
+    tkn(4, 30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 50);
+    tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT);
+    /* 13.4.14 Start with true permissive while pending restarts explicitly and clears the countdown */
+    heat_on(30); PERM = 0; tk(30); tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 900);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT && WN == TC_WN_NONE && dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0 && dg(TC_DIAG_CONTROLLER_STARTED) == 1);
+    PERM = 1; tk(30); CHECK(ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    /* ... and while tripped */
+    heat_on(30); PERM = 0; tk(30); PERM = 1; tk(30); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);
+    start0(1); CHECK(ST == TC_ST_TEMP_AT_SETPT); tk(30); CHECK(ST == TC_ST_HEAT_PENDING);
+    /* 13.4.9 sensor / control state frozen while pending, tripped and stopped: no accumulation, no averaging, no failure */
+    heat_on(30); PERM = 0; tk(30);
+    for (i = 0; i < 5; i++) tk(NAN);
+    CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && WN == TC_WN_OPERATING_CONDITION_NOT_MET && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 0);
+    CHECK(ISNAN(dg(TC_DIAG_TEMP1_RAW)) && dg(TC_DIAG_CONTROL_TEMP) == 30 && dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0);
+    CHECKF(dg(TC_DIAG_TEMP1_AVG), 30);
+    PERM = 1; tkn(20, NAN); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 0);
+    /* 13.4.8 relay feedback: the intentional off transition is never a mismatch; a relay still closed is caught after the restart */
+    base(); feedback(); init0(); tkn(6, 30); CHECK(DH == 1); PERM = 0;
+    tkf(30, 1, 0); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && DH == 0 && WN == TC_WN_OPERATING_CONDITION_NOT_MET && dg(TC_DIAG_HEATER_FB_REMAIN_MS) == 0);
+    for (i = 0; i < 8; i++) { tkf(30, 1, 0); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_HEATER_FB_REMAIN_MS) == 0); }
+    PERM = 1; tkf(30, 1, 0); CHECK(ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED && WN == TC_WN_NONE);
+    start0(1); tkf(30, 1, 0); CHECK(WN == TC_WN_HEATER_FB_MISMATCH && ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_HEATER_FB_REMAIN_MS) == 400);
+    for (i = 0; i < 4; i++) tkf(30, 1, 0);
+    CHECK(ST == TC_ST_HEATER_FB_FAULT);
+    /* 13.4.10 an existing fault maturing on the first false tick wins: sensor, disagreement, heater fb, cooler fb */
+    base(); init0(); tk(50); tkn(9, NAN); PERM = 0; tk(NAN); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH && WN == TC_WN_TEMP1_OUT_OF_RANGE);
+    PERM = 1; tk(50); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH);
+    base(); two_sensor(); S[TC_SETUP_FILTER_POINTS] = 1; S[TC_SETUP_TEMP_COMPARE_TIMEOUT] = 400; init0();
+    tk2(50, 50); tk2n(4, 50, 60); PERM = 0; tk2(50, 60); CHECK(ST == TC_ST_TEMP_DISAGREE_FAULT);
+    PERM = 1;
+    base(); feedback(); init0(); tk(50); for (i = 0; i < 4; i++) tkf(50, 1, 0);
+    PERM = 0; tkf(50, 1, 0); CHECK(ST == TC_ST_HEATER_FB_FAULT); PERM = 1;
+    base(); feedback(); init0(); tk(50); for (i = 0; i < 4; i++) tkf(50, 0, 1);
+    PERM = 0; tkf(50, 0, 1); CHECK(ST == TC_ST_COOLER_FB_FAULT); PERM = 1;
+    /* a fault that would have matured one tick LATER does not happen: the trip freezes it */
+    base(); init0(); tk(50); tkn(8, NAN); PERM = 0; tk(NAN); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 900);
+    tkn(5, NAN); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 900);
+    PERM = 1;
+    /* 13.4.12 TcGetDiag at any rate does not advance the countdown */
+    heat_on(30); PERM = 0; tk(30); tk(30);
+    for (i = 0; i < 100; i++) TcGetDiag(0, DG, TC_DIAG_COUNT);
+    CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 900 && ST == TC_ST_OPERATING_CONDITION_PENDING);
+    tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800);
+    PERM = 1;
+    /* the trip clears transient warnings like Stop does; RunningOnTemp2 masks warning 8 (13.6.1) */
+    base(); init0(); tk(50); tk(200); CHECK(WN == TC_WN_TEMP1_OUT_OF_RANGE);
+    PERM = 0; tk(200); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    PERM = 1;
+    base(); two_sensor(); init0(); tk2(50, 50); tk2n(10, NAN, 50); tk2(50, 50); CHECK(WN == TC_WN_RUNNING_ON_TEMP2);
+    PERM = 0; tk2(50, 50); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING && WN == TC_WN_RUNNING_ON_TEMP2);
+    tkn(10, 50); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT && WN == TC_WN_RUNNING_ON_TEMP2);
+    PERM = 1;
+}
+
+/* ----------------------------------------------------------------------- */
+/* R10.7 timing of the operating-condition countdown  (13.5)               */
+/* ----------------------------------------------------------------------- */
+static void test_R10_time(void)
+{
+    int i;
+    /* 13.5.1 across the 2^32 wrap */
+    base(); NOW = 0xFFFFFFFFu - 850u; init0(); tkn(6, 30); CHECK(DH == 1);
+    PERM = 0; tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING);
+    for (i = 0; i < 9; i++) { tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_PENDING); }
+    CHECK(NOW < 2000u);                                                  /* wrapped */
+    tk(30); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT);
+    PERM = 1;
+    /* 13.5.2 / 13.5.3 a backwards step and the same timestamp add nothing */
+    heat_on(30); PERM = 0; tk(30); tk(30); tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800);
+    NOW -= 50000; tkz(0, 30, 30, 0, 0); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800 && ST == TC_ST_OPERATING_CONDITION_PENDING);
+    tkz(0, 30, 30, 0, 0); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 800);
+    tk(30); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 700);
+    /* 13.5.4 a long gap expires the pending timeout */
+    NOW += 600000; tkz(0, 30, 30, 0, 0); CHECK(ST == TC_ST_OPERATING_CONDITION_FAULT);
+    PERM = 1;
+    /* 13.5.5 stopped time is excluded: the Start re-bases the time reference */
+    base(); init0(); tk(30); tk(30); CHECK(dg(TC_DIAG_DEADBAND_REMAIN_MS) == 400);
+    stop0(); NOW += 3600000u; tk(30); CHECK(ST == TC_ST_IDLE_STOPPED);
+    NOW += 3600000u; start0(1); tk(30); CHECK(ST == TC_ST_HEAT_PENDING && dg(TC_DIAG_DEADBAND_REMAIN_MS) == 500);
+    tk(30); CHECK(dg(TC_DIAG_DEADBAND_REMAIN_MS) == 400);
+    /* the pending countdown runs on CheckTemp wall time */
+    heat_on(30); PERM = 0; tk(30); NOW += 400; tkz(0, 30, 30, 0, 0); CHECK(dg(TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 600);
+    PERM = 1;
+}
+
+/* ----------------------------------------------------------------------- */
+/* status / warning consistency and the new diagnostics  (13.6)            */
+/* ----------------------------------------------------------------------- */
+static void test_R10_status_warning(void)
+{
+    int i;
+    /* 13.6.4 codes */
+    CHECK(TC_ST_IDLE_STOPPED < TC_ST_FAULT_FIRST && TC_ST_IDLE_START_BLOCKED < TC_ST_FAULT_FIRST);
+    CHECK(TC_ST_OPERATING_CONDITION_PENDING < TC_ST_FAULT_FIRST && TC_ST_IDLE_OPERATING_CONDITION_TRIPPED < TC_ST_FAULT_FIRST);
+    CHECK(TC_ST_OPERATING_CONDITION_FAULT == 17 && TC_ST_IDLE_STOPPED == 6 && TC_ST_IDLE_START_BLOCKED == 7);
+    CHECK(TC_ST_OPERATING_CONDITION_PENDING == 8 && TC_ST_IDLE_OPERATING_CONDITION_TRIPPED == 9 && TC_WN_OPERATING_CONDITION_NOT_MET == 8);
+    CHECK(TC_SETUP_OPERATING_CONDITION_TIMEOUT == 17 && TC_DIAG_RUN_PERMISSIVE == 25 && TC_DIAG_OPERATING_CONDITION_REMAIN_MS == 26 && TC_DIAG_CONTROLLER_STARTED == 27);
+    /* 13.6.5 the mirrors follow every stateful call, not TcGetDiag */
+    base(); oinit0(); CHECK(dg(TC_DIAG_STATUS_MIRROR) == ST && dg(TC_DIAG_WARNING_MIRROR) == WN && ST == TC_ST_IDLE_STOPPED);
+    start0(0); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_START_BLOCKED && dg(TC_DIAG_WARNING_MIRROR) == TC_WN_OPERATING_CONDITION_NOT_MET);
+    start0(1); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_TEMP_AT_SETPT && dg(TC_DIAG_WARNING_MIRROR) == 0);
+    tkn(6, 30); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_HEATER_ON && dg(TC_DIAG_DO_HEATER_MIRROR) == 1 && DH == 1);
+    stop0(); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED && dg(TC_DIAG_DO_HEATER_MIRROR) == 0 && DH == 0);
+    orst0(); CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED && dg(TC_DIAG_WARNING_MIRROR) == 0);
+    for (i = 0; i < 3; i++) TcGetDiag(0, DG, TC_DIAG_COUNT);
+    CHECK(dg(TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED && dg(TC_DIAG_CONTROLLER_STARTED) == 0);
+    /* 13.6.6 RunPermissive: NaN after Init / Reset; enabled non-faulted Start and CheckTemp update it;
+       disabled, faulted and idempotent calls do not; Stop leaves it */
+    base(); oinit0(); CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)));
+    start0(0); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 0);
+    PERM = 1; tk(30); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    start0(1); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    start0(0); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1);                     /* idempotent Start: not evaluated */
+    PERM = 0; tk(30); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 0 && ST == TC_ST_OPERATING_CONDITION_PENDING);
+    PERM = 1; tk(30); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1 && ST == TC_ST_IDLE_OPERATING_CONDITION_TRIPPED);
+    start0(0); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 0);                     /* refused Start from tripped: evaluated (V4-D2) */
+    stop0(); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 0 && WN == TC_WN_OPERATING_CONDITION_NOT_MET);
+    orst0(); CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)));
+    tk(30); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1); oinit0(); CHECK(ISNAN(dg(TC_DIAG_RUN_PERMISSIVE)));
+    base(); init0(); tk(50); tkn(10, NAN); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH && dg(TC_DIAG_RUN_PERMISSIVE) == 1);
+    PERM = 0; tk(50); start0(0); CHECK(dg(TC_DIAG_RUN_PERMISSIVE) == 1);   /* faulted: not evaluated */
+    PERM = 1;
+    /* the fault tick itself records the permissive it evaluated */
+    base(); init0(); tk(50); tkn(9, NAN); PERM = 0; tk(NAN); CHECK(ST == TC_ST_TEMP1_FAIL_HIGH && dg(TC_DIAG_RUN_PERMISSIVE) == 0);
+    PERM = 1;
+    /* status 0 never warns 8: disabled with a false permissive */
+    base(); S[TC_SETUP_TEMP_CTRL_ENABLE] = 0; oinit0(); start0(0); CHECK(ST == TC_ST_TEMP_CTRL_DISABLED && WN == TC_WN_NONE);
+    PERM = 0; tk(30); CHECK(WN == TC_WN_NONE && ST == TC_ST_TEMP_CTRL_DISABLED); PERM = 1;
+}
+
+/* ----------------------------------------------------------------------- */
+/* independent lifecycle per zone  (13.7)                                  */
+/* ----------------------------------------------------------------------- */
+static void test_R10_two_zones(void)
+{
+    int i;
+    int32_t dh0 = 0, dc0 = 0, dh1 = 0, dc1 = 0, st0 = 0, wn0 = 0, st1 = 0, wn1 = 0;
+    /* zone 0 trips and faults on its permissive while zone 1 keeps heating */
+    base(); NOW = 0; orstz(1); oinitz(1); startz(1, 1);
+    base(); NOW = 0; orstz(0); oinitz(0); startz(0, 1);              /* zone 0 last: base() resets it */
+    for (i = 1; i <= 6; i++) {
+        NOW = (uint32_t)(i * 100);
+        TcCheckTemp(0, NOW, 30, 30, dh0, dc0, 1, &dh0, &dc0, &st0, &wn0);
+        TcCheckTemp(1, NOW, 30, 30, dh1, dc1, 1, &dh1, &dc1, &st1, &wn1);
+    }
+    CHECK(dh0 == 1 && dh1 == 1);
+    for (i = 7; i <= 17; i++) {
+        NOW = (uint32_t)(i * 100);
+        TcCheckTemp(0, NOW, 30, 30, dh0, dc0, 0, &dh0, &dc0, &st0, &wn0);
+        TcCheckTemp(1, NOW, 30, 30, dh1, dc1, 1, &dh1, &dc1, &st1, &wn1);
+        CHECK(dh0 == 0 && dh1 == 1 && st1 == TC_ST_HEATER_ON && wn1 == TC_WN_NONE);
+        CHECK(st0 == (i < 17 ? TC_ST_OPERATING_CONDITION_PENDING : TC_ST_OPERATING_CONDITION_FAULT));
+    }
+    CHECK(dgz(1, TC_DIAG_CONTROLLER_STARTED) == 1 && dgz(0, TC_DIAG_CONTROLLER_STARTED) == 0);
+    CHECK(dgz(1, TC_DIAG_OPERATING_CONDITION_REMAIN_MS) == 0 && dgz(1, TC_DIAG_RUN_PERMISSIVE) == 1 && dgz(0, TC_DIAG_RUN_PERMISSIVE) == 0);
+    /* Stop / Reset / Start on one zone change nothing on the other */
+    stopz(1); CHECK(ST == TC_ST_IDLE_STOPPED && dgz(0, TC_DIAG_STATUS_MIRROR) == TC_ST_OPERATING_CONDITION_FAULT);
+    orstz(0); CHECK(dgz(0, TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED && dgz(1, TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED);
+    startz(1, 0); CHECK(dgz(1, TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_START_BLOCKED && dgz(0, TC_DIAG_STATUS_MIRROR) == TC_ST_IDLE_STOPPED && ISNAN(dgz(0, TC_DIAG_RUN_PERMISSIVE)));
+    /* all 16 zones hold independent lifecycle states */
+    for (i = TC_MAX_ZONES - 1; i >= 0; i--) { base(); NOW = 0; orstz(i); oinitz(i); startz(i, i % 2); }
+    for (i = 0; i < TC_MAX_ZONES; i++) CHECK(dgz(i, TC_DIAG_STATUS_MIRROR) == (i % 2 ? TC_ST_TEMP_AT_SETPT : TC_ST_IDLE_START_BLOCKED));
 }
 
 /* ----------------------------------------------------------------------- */
@@ -1090,8 +1588,15 @@ int main(void)
     test_R9_init_reset();
     test_R9_fault_behaviour();
     test_time();
+    test_R10_init_reset();
+    test_R10_start();                 /* needs zone 11 untouched: before the 16-zone loop of test_two_zones */
+    test_R10_stop();                  /* needs zone 12 untouched */
+    test_R10_permissive_loss();
+    test_R10_time();
+    test_R10_status_warning();
     test_two_zones();
     test_diag_readonly();
+    test_R10_two_zones();
     printf("TempCtl %d.%d.%d unit tests: %d passed, %d failed\n",
            TC_VERSION_MAJOR, TC_VERSION_MINOR, TC_VERSION_PATCH, g_pass, g_fail);
     return g_fail ? 1 : 0;

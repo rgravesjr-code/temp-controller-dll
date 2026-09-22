@@ -1,0 +1,8 @@
+# TempCtl v4.0.0 test_tempctl (linux-arm64) on pi-engine, Linux 6.18.34+rpt-rpi-2712 aarch64, 2026-09-22T21:41:15Z
+# glibc: ldd (Debian GLIBC 2.41-12+rpt1+deb13u3) 2.41
+# sha256: 2be89ef517a799fc0e3f31d059a68e8dcfe67ef7d7866d7ceae68da63572384b
+TempCtl 4.0.0 unit tests: 2186 passed, 0 failed
+exit=0
+
+# The linux-armhf (32-bit ARM, myRIO-1900) test_tempctl cannot execute on this aarch64 userland
+# (no /lib/ld-linux-armhf.so.3); it is built and ELF-inspected here and executed on the myRIO only.

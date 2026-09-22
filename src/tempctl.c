@@ -1,9 +1,10 @@
 /*
- * tempctl.c - TempCtl v3 controller (see tempctl.h and TEMPCTL-SPEC-v3.0.0.md).
+ * tempctl.c - TempCtl v4 controller (see tempctl.h and TEMPCTL-SPEC-v4.0.0.md).
  *
  * All state is static (16 zones), no allocation, no I/O, no <math.h>: the
  * .so imports memcpy/memset from libc only. Rule numbers (Rx.y) refer to
- * the v3.0.0 specification.
+ * the v4.0.0 specification; R1..R9 are the v3 rules kept unchanged, R10 is
+ * the v4 lifecycle (Start / Stop / run permissive).
  */
 #include "tempctl.h"
 #include <string.h>
@@ -13,6 +14,12 @@
 #define COND_NONE  0
 #define COND_HEAT  1
 #define COND_COOL  2
+
+/* lifecycle of a non-faulted, enabled zone that is not started (R10) */
+#define LIFE_IDLE     0        /* IdleStopped                                    */
+#define LIFE_BLOCKED  1        /* IdleStartBlocked                               */
+#define LIFE_PENDING  2        /* OperatingConditionPending (countdown running)  */
+#define LIFE_TRIPPED  3        /* IdleOperatingConditionTripped                  */
 
 typedef struct {
     int      enable, units;
@@ -24,6 +31,7 @@ typedef struct {
     int      filter;
     int      fben;
     uint32_t fbTo;
+    uint32_t ocTo;                      /* OperatingConditionTimeout (R10.7)            */
 } TcCfg;
 
 typedef struct {
@@ -42,15 +50,19 @@ typedef struct {
     int      init;
     TcCfg    cfg;
     int      configFault, configInvalid;
-    int      stopped;
-    int32_t  status, warning;           /* last reported values                          */
+    int      faulted;                   /* a fault is latched (status >= TC_ST_FAULT_FIRST) */
+    int      started;                   /* Start accepted, control may run (R10.3)        */
+    int      life;                      /* LIFE_* while enabled, not faulted, not started */
+    int      runPerm;                   /* last evaluated permissive: -1 none, 0, 1       */
+    int32_t  status, warning;           /* last reported values (the mirrors)             */
     int      doHeater, doCooler;        /* current commands                              */
     int      prevHeater, prevCooler;    /* commands of the previous CheckTemp (R8.3)     */
     uint32_t lastMs;
     int      activeSensor;
     int      initialHc;
     int      runningOnT2;
-    int      seenCheck;
+    int      seenCheck;                 /* an active CheckTemp has run since Init/Reset   */
+    int      seenRaw;                   /* any enabled CheckTemp has run since Init/Reset */
     double   ctrlTemp;
     TcSensor s[2];
     int      dbCond;  uint32_t dbEl;    /* deadband countdown (R7.1)                     */
@@ -59,6 +71,7 @@ typedef struct {
     int      cmpWarn;
     int      hfbCond; uint32_t hfbEl;   /* feedback countdowns (R8.4)                    */
     int      cfbCond; uint32_t cfbEl;
+    int      ocCond;  uint32_t ocEl;    /* operating-condition countdown (R10.7)         */
 } TcZone;
 
 static TcZone g_zones[TC_MAX_ZONES];
@@ -136,17 +149,38 @@ static int parse_cfg(const double* a, TcCfg* c)
     if (c->fben) {                                                         /* check 7 */
         if (!to_ms(a[TC_SETUP_RELAY_FEEDBACK_TIMEOUT], &c->fbTo)) ok = 0;
     }
+
+    if (!to_ms(a[TC_SETUP_OPERATING_CONDITION_TIMEOUT], &c->ocTo)) ok = 0; /* check 8 (v4) */
     return ok;
 }
 
 /* ------------------------------------------------------------------------ */
 /* per-zone state                                                            */
 /* ------------------------------------------------------------------------ */
+/* Countdowns that only run while started (R7, R6.4, R8.4). */
+static void clear_control_countdowns(TcZone* z)
+{
+    z->dbCond = z->aspCond = z->cmpCond = z->hfbCond = z->cfbCond = COND_NONE;
+    z->dbEl = z->aspEl = z->cmpEl = z->hfbEl = z->cfbEl = 0;
+    z->cmpWarn = 0;
+}
+
+/* Transient warning conditions 1..5 describe the current tick; once the
+ * zone stops evaluating (Stop, permissive trip) they are cleared (R10.4). */
+static void clear_transient_conditions(TcZone* z)
+{
+    z->s[0].oor = z->s[1].oor = 0;
+    clear_control_countdowns(z);
+}
+
 /* Clear everything except the stored setup and the config flags. */
 static void clear_runtime(TcZone* z)
 {
     int i;
-    z->stopped = 0;
+    z->faulted = 0;
+    z->started = 0;
+    z->life = LIFE_IDLE;
+    z->runPerm = -1;
     z->status = TC_ST_TEMP_CTRL_DISABLED;
     z->warning = TC_WN_NONE;
     z->doHeater = z->doCooler = 0;
@@ -155,14 +189,14 @@ static void clear_runtime(TcZone* z)
     z->initialHc = 0;
     z->runningOnT2 = 0;
     z->seenCheck = 0;
+    z->seenRaw = 0;
     z->ctrlTemp = quiet_nan();
     for (i = 0; i < 2; i++) {
         memset(&z->s[i], 0, sizeof z->s[i]);
         z->s[i].raw = z->s[i].val = quiet_nan();
     }
-    z->dbCond = z->aspCond = z->cmpCond = z->hfbCond = z->cfbCond = COND_NONE;
-    z->dbEl = z->aspEl = z->cmpEl = z->hfbEl = z->cfbEl = 0;
-    z->cmpWarn = 0;
+    clear_control_countdowns(z);
+    z->ocCond = COND_NONE; z->ocEl = 0;
 }
 
 static uint32_t elapsed_ms(TcZone* z, uint32_t nowMs)
@@ -203,6 +237,8 @@ static void avg_push(TcSensor* s, double v, int n)
     if (s->avgN < n) s->avgN++;
 }
 
+static void avg_clear(TcSensor* s) { s->avgN = 0; s->avgHead = 0; }
+
 static void ring_advance(TcSensor* s, uint32_t dt)
 {
     s->bucketElapsed = sat_add(s->bucketElapsed, dt);
@@ -223,6 +259,13 @@ static uint32_t ring_count(const TcSensor* s)
     int i;
     for (i = 0; i < NBUCKET; i++) total = sat_add(total, s->bucket[i]);
     return total;
+}
+
+/* The hourly rings age in wall time even while the zone is stopped (R10.6). */
+static void rings_age(TcZone* z, uint32_t dt)
+{
+    ring_advance(&z->s[0], dt);
+    ring_advance(&z->s[1], dt);
 }
 
 /* Range check, hourly transitions, leaky accumulator, failure, average (R4, R5). */
@@ -252,6 +295,21 @@ static void update_sensor(TcSensor* s, double raw, double val, const TcCfg* c, u
     if (!s->oor) avg_push(s, val, c->filter);       /* R4.3: only in-range samples are averaged */
 }
 
+/* Mirror the raw inputs while nothing is evaluated (stopped, blocked, pending, tripped). */
+static void mirror_raw(TcZone* z, double temp1, double temp2)
+{
+    z->seenRaw = 1;
+    z->s[0].raw = z->s[0].val = temp1;
+    if (z->cfg.t2en) { z->s[1].raw = temp2; z->s[1].val = temp2 + z->cfg.t2off; }
+    else             { z->s[1].raw = z->s[1].val = quiet_nan(); }
+}
+
+/* Warning 8 describes a false permissive seen in a blocked / pending / tripped state. */
+static int oc_warn(const TcZone* z)
+{
+    return !z->started && z->life != LIFE_IDLE && z->runPerm == 0;
+}
+
 static int32_t compute_warning(const TcZone* z)
 {
     const TcCfg* c = &z->cfg;
@@ -261,14 +319,28 @@ static int32_t compute_warning(const TcZone* z)
     if (c->fben && z->cfbCond)       return TC_WN_COOLER_FB_MISMATCH;
     if (z->cmpWarn)                  return TC_WN_TEMP_DISAGREE;
     if (z->runningOnT2)              return TC_WN_RUNNING_ON_TEMP2;
+    if (oc_warn(z))                  return TC_WN_OPERATING_CONDITION_NOT_MET;
     return TC_WN_NONE;
 }
 
-static void stop_zone(TcZone* z, int32_t fault)
+/* Latch a fault: relays 0, Started 0, status frozen (R9.6). */
+static void fault_zone(TcZone* z, int32_t fault)
 {
-    z->stopped = 1;
+    z->faulted = 1;
+    z->started = 0;
     z->doHeater = z->doCooler = 0;
     z->status = fault;
+}
+
+/* Status of an enabled, non-started, non-faulted zone (R10.6). */
+static int32_t idle_status(const TcZone* z)
+{
+    switch (z->life) {
+    case LIFE_BLOCKED: return TC_ST_IDLE_START_BLOCKED;
+    case LIFE_PENDING: return TC_ST_OPERATING_CONDITION_PENDING;
+    case LIFE_TRIPPED: return TC_ST_IDLE_OPERATING_CONDITION_TRIPPED;
+    default:           return TC_ST_IDLE_STOPPED;
+    }
 }
 
 static void write_outputs(const TcZone* z, int32_t* doHeater, int32_t* doCooler, int32_t* status, int32_t* warning)
@@ -279,14 +351,12 @@ static void write_outputs(const TcZone* z, int32_t* doHeater, int32_t* doCooler,
     *warning = z->warning;
 }
 
-/* Status after Init/Reset, before the first CheckTemp. */
+/* Status after Init/Reset (R10.2, R10.5). */
 static int32_t rest_status(const TcZone* z)
 {
     if (!z->cfg.enable) return TC_ST_TEMP_CTRL_DISABLED;
-    if (z->stopped)     return z->status;
-    if (z->doHeater)    return TC_ST_HEATER_ON;
-    if (z->doCooler)    return TC_ST_COOLER_ON;
-    return TC_ST_TEMP_AT_SETPT;
+    if (z->faulted)     return z->status;
+    return TC_ST_IDLE_STOPPED;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -302,25 +372,20 @@ TC_API int32_t TcInit(int32_t zone, uint32_t nowMs,
 {
     TcZone* z;
     TcCfg c;
-    int ok, wasRunning, keepH = 0, keepC = 0;
+    int ok;
 
     if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
     if (!setupArray || !status || !warning || setupLen != TC_SETUP_COUNT) return TC_ERR_ARG;
     z = &g_zones[zone];
 
     ok = parse_cfg(setupArray, &c);
-    wasRunning = z->init && z->cfg.enable && !z->stopped;                 /* R9.3 */
-    if (wasRunning && c.enable && ok) { keepH = z->doHeater; keepC = z->doCooler; }
-
-    clear_runtime(z);
+    clear_runtime(z);                                                      /* R10.2: relays 0, not started; no relay keeping */
     z->init = 1;
     z->cfg = c;
     z->lastMs = nowMs;
     z->configFault = z->configInvalid = 0;
-    z->doHeater = z->prevHeater = keepH;
-    z->doCooler = z->prevCooler = keepC;
     if (!ok) {                                                             /* R9.5 */
-        if (c.enable) { z->configFault = 1; stop_zone(z, TC_ST_CONFIG_FAULT); }
+        if (c.enable) { z->configFault = 1; fault_zone(z, TC_ST_CONFIG_FAULT); }
         else          { z->configInvalid = 1; }
     }
     z->status = rest_status(z);
@@ -337,18 +402,108 @@ TC_API int32_t TcReset(int32_t zone, uint32_t nowMs, int32_t* status, int32_t* w
     z = &g_zones[zone];
     if (!z->init) { *status = TC_ST_TEMP_CTRL_DISABLED; *warning = TC_WN_NONE; return TC_OK; }   /* R2.4 */
 
-    clear_runtime(z);                                                      /* R9.2: keeps cfg + config flags */
+    clear_runtime(z);                                                      /* R9.2 / R10.5: keeps cfg + config flags */
     z->lastMs = nowMs;
-    if (z->configFault) stop_zone(z, TC_ST_CONFIG_FAULT);                  /* Reset does not clear it */
+    if (z->configFault) fault_zone(z, TC_ST_CONFIG_FAULT);                 /* Reset does not clear it */
     z->status = rest_status(z);
     z->warning = z->configInvalid ? TC_WN_CONFIG_INVALID : TC_WN_NONE;
     write_outputs(z, 0, 0, status, warning);
     return TC_OK;
 }
 
+TC_API int32_t TcStart(int32_t zone, uint32_t nowMs, int32_t runPermissive,
+                       int32_t* status, int32_t* warning)
+{
+    TcZone* z;
+    uint32_t gap;
+
+    if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
+    if (!status || !warning) return TC_ERR_ARG;
+    z = &g_zones[zone];
+
+    if (!z->init || !z->cfg.enable) {                                      /* R10.1: cannot start */
+        z->status = TC_ST_TEMP_CTRL_DISABLED;
+        z->warning = z->configInvalid ? TC_WN_CONFIG_INVALID : TC_WN_NONE;
+        write_outputs(z, 0, 0, status, warning);
+        return TC_OK;
+    }
+    if (z->faulted || z->started) {                                        /* R10.3 steps 3, 4: no evaluation */
+        write_outputs(z, 0, 0, status, warning);
+        return TC_OK;
+    }
+
+    z->runPerm = runPermissive != 0;                                       /* evaluated (V4-D2) */
+    if (!z->runPerm) {                                                     /* steps 5..7: refused */
+        if (z->life != LIFE_PENDING && z->life != LIFE_TRIPPED) z->life = LIFE_BLOCKED;
+        z->status = idle_status(z);
+        z->warning = compute_warning(z);
+        write_outputs(z, 0, 0, status, warning);
+        return TC_OK;
+    }
+
+    /* step 8: accepted. Stopped time never feeds a countdown, but the hourly rings age. */
+    gap = nowMs - z->lastMs;
+    if (gap < 0x80000000u) rings_age(z, gap);
+    z->lastMs = nowMs;
+    z->started = 1;
+    z->life = LIFE_IDLE;
+    z->doHeater = z->doCooler = z->prevHeater = z->prevCooler = 0;
+    clear_transient_conditions(z);
+    z->ocCond = COND_NONE; z->ocEl = 0;
+    avg_clear(&z->s[0]); avg_clear(&z->s[1]);
+    z->initialHc = 0;
+    z->status = TC_ST_TEMP_AT_SETPT;                                       /* provisional until the first CheckTemp */
+    z->warning = compute_warning(z);                                       /* RunningOnTemp2 survives (R5.5) */
+    write_outputs(z, 0, 0, status, warning);
+    return TC_OK;
+}
+
+TC_API int32_t TcStop(int32_t zone, uint32_t nowMs,
+                      int32_t* doHeater, int32_t* doCooler,
+                      int32_t* status, int32_t* warning)
+{
+    TcZone* z;
+    if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
+    if (!doHeater || !doCooler || !status || !warning) return TC_ERR_ARG;
+    z = &g_zones[zone];
+
+    if (!z->init) {
+        *doHeater = *doCooler = 0; *status = TC_ST_TEMP_CTRL_DISABLED; *warning = TC_WN_NONE;
+        return TC_OK;
+    }
+    if (!z->cfg.enable) {
+        z->doHeater = z->doCooler = 0;
+        z->status = TC_ST_TEMP_CTRL_DISABLED;
+        z->warning = z->configInvalid ? TC_WN_CONFIG_INVALID : TC_WN_NONE;
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
+    if (z->faulted) {                                                      /* fault and frozen warning kept */
+        z->doHeater = z->doCooler = 0;
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
+
+    z->started = 0;
+    z->doHeater = z->doCooler = z->prevHeater = z->prevCooler = 0;
+    z->lastMs = nowMs;
+    clear_transient_conditions(z);                                         /* warnings 1..5 gone */
+    if (z->life == LIFE_PENDING || z->life == LIFE_TRIPPED) {
+        z->ocCond = COND_NONE; z->ocEl = 0;                                /* escalation cancelled, cause kept */
+        z->life = LIFE_TRIPPED;
+    } else {
+        z->life = LIFE_IDLE;                                               /* Stop acknowledges a blocked Start */
+    }
+    z->status = idle_status(z);
+    z->warning = compute_warning(z);
+    write_outputs(z, doHeater, doCooler, status, warning);
+    return TC_OK;
+}
+
 TC_API int32_t TcCheckTemp(int32_t zone, uint32_t nowMs,
                            double temp1, double temp2,
                            int32_t diHeaterFB, int32_t diCoolerFB,
+                           int32_t runPermissive,
                            int32_t* doHeater, int32_t* doCooler,
                            int32_t* status, int32_t* warning)
 {
@@ -356,7 +511,7 @@ TC_API int32_t TcCheckTemp(int32_t zone, uint32_t nowMs,
     const TcCfg* c;
     uint32_t dt;
     int32_t fault = 0;
-    int activeOor;
+    int activeOor, perm;
 
     if (zone < 0 || zone >= TC_MAX_ZONES) return TC_ERR_ZONE;
     if (!doHeater || !doCooler || !status || !warning) return TC_ERR_ARG;
@@ -373,13 +528,38 @@ TC_API int32_t TcCheckTemp(int32_t zone, uint32_t nowMs,
     }
     dt = elapsed_ms(z, nowMs);
 
-    /* R9.6: stopped on a fault -> relays 0, status latched, warning frozen */
-    if (z->stopped) {
+    /* R9.6: latched fault -> relays 0, status latched, warning frozen, permissive not evaluated */
+    if (z->faulted) {
         z->doHeater = z->doCooler = 0;
         write_outputs(z, doHeater, doCooler, status, warning);
         return TC_OK;
     }
+    perm = runPermissive != 0;
+    z->runPerm = perm;
+
+    /* R10.6: not started -> nothing evaluated but the pending permissive countdown */
+    if (!z->started) {
+        z->doHeater = z->doCooler = 0;
+        mirror_raw(z, temp1, temp2);
+        rings_age(z, dt);
+        if (z->life == LIFE_PENDING) {
+            if (perm) {                                                    /* recovered before the timeout: no fault, no restart */
+                z->ocCond = COND_NONE; z->ocEl = 0;
+                z->life = LIFE_TRIPPED;
+            } else if (countdown(&z->ocCond, &z->ocEl, COND_HEAT, c->ocTo, dt)) {
+                z->warning = compute_warning(z);                           /* frozen from here on */
+                fault_zone(z, TC_ST_OPERATING_CONDITION_FAULT);
+                write_outputs(z, doHeater, doCooler, status, warning);
+                return TC_OK;
+            }
+        }
+        z->status = idle_status(z);
+        z->warning = compute_warning(z);
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
     z->seenCheck = 1;
+    z->seenRaw = 1;
 
     /* ---- sensors (R4, R5, R6.1) ------------------------------------- */
     update_sensor(&z->s[0], temp1, temp1, c, dt);
@@ -422,9 +602,22 @@ TC_API int32_t TcCheckTemp(int32_t zone, uint32_t nowMs,
         if (!fault && cf) fault = TC_ST_COOLER_FB_FAULT;
     }
 
-    if (fault) {                                                           /* R9.6 */
+    if (fault) {                                                           /* R9.6: an existing fault wins (R10.7 step 1) */
         z->warning = compute_warning(z);
-        stop_zone(z, fault);
+        fault_zone(z, fault);
+        write_outputs(z, doHeater, doCooler, status, warning);
+        return TC_OK;
+    }
+
+    /* ---- run permissive lost (R10.7, R10.8): both relays off on this sample */
+    if (!perm) {
+        z->started = 0;
+        z->life = LIFE_PENDING;
+        z->doHeater = z->doCooler = z->prevHeater = z->prevCooler = 0;
+        clear_transient_conditions(z);                                     /* R10.9: no feedback fault from this transition */
+        countdown(&z->ocCond, &z->ocEl, COND_HEAT, c->ocTo, dt);           /* observed: full timeout remaining */
+        z->status = TC_ST_OPERATING_CONDITION_PENDING;
+        z->warning = compute_warning(z);
         write_outputs(z, doHeater, doCooler, status, warning);
         return TC_OK;
     }
@@ -482,13 +675,14 @@ TC_API int32_t TcGetDiag(int32_t zone, double* diagArray, int32_t diagLen)
         d[TC_DIAG_CONTROL_TEMP] = d[TC_DIAG_TEMP1_RAW] = d[TC_DIAG_TEMP2_RAW] = d[TC_DIAG_TEMP2_CORRECTED] = nan;
         d[TC_DIAG_TEMP1_AVG] = d[TC_DIAG_TEMP2_AVG] = d[TC_DIAG_HI_BAND] = d[TC_DIAG_LO_BAND] = nan;
         d[TC_DIAG_ACTIVE_SENSOR] = 1.0;
+        d[TC_DIAG_RUN_PERMISSIVE] = nan;
         return TC_OK;
     }
     d[TC_DIAG_CONTROL_TEMP]     = z->seenCheck ? z->ctrlTemp : nan;
     d[TC_DIAG_ACTIVE_SENSOR]    = (double)z->activeSensor;
-    d[TC_DIAG_TEMP1_RAW]        = z->seenCheck ? z->s[0].raw : nan;
-    d[TC_DIAG_TEMP2_RAW]        = (z->seenCheck && c->t2en) ? z->s[1].raw : nan;
-    d[TC_DIAG_TEMP2_CORRECTED]  = (z->seenCheck && c->t2en) ? z->s[1].val : nan;
+    d[TC_DIAG_TEMP1_RAW]        = z->seenRaw ? z->s[0].raw : nan;
+    d[TC_DIAG_TEMP2_RAW]        = (z->seenRaw && c->t2en) ? z->s[1].raw : nan;
+    d[TC_DIAG_TEMP2_CORRECTED]  = (z->seenRaw && c->t2en) ? z->s[1].val : nan;
     d[TC_DIAG_TEMP1_AVG]        = avg_value(&z->s[0]);
     d[TC_DIAG_TEMP2_AVG]        = c->t2en ? avg_value(&z->s[1]) : nan;
     d[TC_DIAG_HI_BAND]          = c->hiBand;
@@ -509,5 +703,8 @@ TC_API int32_t TcGetDiag(int32_t zone, double* diagArray, int32_t diagLen)
     d[TC_DIAG_DO_COOLER_MIRROR] = (double)z->doCooler;
     d[TC_DIAG_APPLIED_FILTER_POINTS] = (double)c->filter;
     d[TC_DIAG_ZONE_INITIALIZED] = 1.0;
+    d[TC_DIAG_RUN_PERMISSIVE]   = z->runPerm < 0 ? nan : (double)z->runPerm;
+    d[TC_DIAG_OPERATING_CONDITION_REMAIN_MS] = (double)remain(z->ocCond, z->ocEl, c->ocTo);
+    d[TC_DIAG_CONTROLLER_STARTED] = (double)z->started;
     return TC_OK;
 }

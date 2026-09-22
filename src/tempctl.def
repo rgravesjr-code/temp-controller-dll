@@ -4,6 +4,8 @@ EXPORTS
     TcSetupCount
     TcDiagCount
     TcInit
+    TcStart
+    TcStop
     TcCheckTemp
     TcReset
     TcGetDiag

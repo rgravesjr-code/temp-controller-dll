@@ -1,26 +1,39 @@
 /*
- * tempctl.h - TempCtl v3: deadband temperature controller with sensor
- * validation, for LabVIEW's Call Library Function Node.
+ * tempctl.h - TempCtl v4: deadband temperature controller with sensor
+ * validation and an explicit Start / Stop / run-permissive lifecycle, for
+ * LabVIEW's Call Library Function Node.
  *
  * Plain C99, no dependencies beyond <string.h>. Builds as tempctl.dll
  * (Windows x64/x86) and libtempctl.so (NI Linux RT x86_64 for the cRIO,
- * aarch64 for the Raspberry Pi bench). All exports use the C calling
- * convention (cdecl). Signals in, signals out: the library owns no
- * hardware, no CAN and no timing.
+ * 32-bit ARM for the myRIO-1900, aarch64 for the Raspberry Pi bench). All
+ * exports use the C calling convention (cdecl). Signals in, signals out:
+ * the library owns no hardware, no CAN, no clock and no thread.
  *
  * This header is written for LabVIEW's Import Shared Library wizard:
  *   - only int32_t, uint32_t and double in signatures;
  *   - arrays are a pointer plus an int32_t length (mark setupArray and
  *     diagArray as arrays in the wizard; nothing else needs correcting);
  *   - no structs, enums, typedefs or 64-bit integers; every code is a
- *     plain int32_t with a #define name below.
+ *     plain int32_t with a #define name below;
+ *   - booleans are int32_t: 0 = false, anything else = true.
  *
  * Call Library Function Node settings: calling convention C, "Run in any
  * thread" (no allocation, I/O or blocking inside), pointers to int32 as
  * "Numeric, Pointer to Value", arrays as "Array Data Pointer" with the
- * length wired separately.
+ * length wired separately. Every call for one zone, including the
+ * read-only TcGetDiag, must be serialized by the host (dataflow); zones
+ * are independent of each other.
  *
- * Behaviour reference: TEMPCTL-SPEC-v3.0.0.md (rule numbers R1..R9 are
+ * Lifecycle (R10): TcInit configures and leaves the zone idle; TcStart
+ * starts control when the run permissive is true; every TcCheckTemp
+ * re-evaluates the live permissive and de-energizes both relays on the
+ * first false sample; TcStop stops without a fault; TcReset clears faults
+ * and leaves the zone stopped. Nothing restarts control except TcStart.
+ * A zone that may be active is stopped with TcStop and the returned zero
+ * commands are applied to the outputs BEFORE TcInit or a non-fault
+ * TcReset, because those two calls return no relay commands.
+ *
+ * Behaviour reference: TEMPCTL-SPEC-v4.0.0.md (rule numbers R1..R10 are
  * quoted in the comments below).
  */
 #ifndef TEMPCTL_H
@@ -45,13 +58,13 @@ extern "C" {
 /* ------------------------------------------------------------------------ */
 /* Version and sizes                                                         */
 /* ------------------------------------------------------------------------ */
-#define TC_VERSION_MAJOR 3
+#define TC_VERSION_MAJOR 4
 #define TC_VERSION_MINOR 0
 #define TC_VERSION_PATCH 0
 
 #define TC_MAX_ZONES      16   /* zone index 0..15                            */
-#define TC_SETUP_COUNT    17   /* elements in setupArray                      */
-#define TC_DIAG_COUNT     25   /* elements in diagArray                       */
+#define TC_SETUP_COUNT    18   /* elements in setupArray                      */
+#define TC_DIAG_COUNT     28   /* elements in diagArray                       */
 #define TC_MAX_FILTER     64   /* largest FilterPoints                        */
 #define TC_DEFAULT_FILTER  4   /* FilterPoints used when the setup value is not 1..64 */
 
@@ -61,15 +74,17 @@ extern "C" {
 #define TC_OK          0   /* call executed                                              */
 #define TC_ERR_ARG    -1   /* null pointer, setupLen != TC_SETUP_COUNT, diagLen < TC_DIAG_COUNT */
 #define TC_ERR_ZONE   -2   /* zone outside 0..TC_MAX_ZONES-1                             */
-/* On a negative return nothing runs and no output is written. */
+/* On a negative return nothing runs and no output is written. A blocked
+ * Start is NOT an error: it returns TC_OK and explains itself in status. */
 
 /* ------------------------------------------------------------------------ */
 /* setupArray indexes (TcInit)                                               */
 /* ------------------------------------------------------------------------ */
 /* Booleans: value > 0.1 -> 1, else 0 (NaN -> 0). Timeouts: whole ms,
  * fractions truncated, must be >= 1. Temperatures: used as supplied, in
- * the unit named by TempUnits (label only, no conversion). */
-#define TC_SETUP_TEMP_CTRL_ENABLE       0   /* bool   master switch for the zone                      */
+ * the unit named by TempUnits (label only, no conversion). Indexes 0..16
+ * are unchanged from v3; index 17 is new in v4. */
+#define TC_SETUP_TEMP_CTRL_ENABLE       0   /* bool   master enable for the zone (permits Start, does not start) */
 #define TC_SETUP_TEMP_UNITS             1   /* 0 = degF, 1 = degC (label only)                        */
 #define TC_SETUP_SETPOINT               2   /* deg                                                    */
 #define TC_SETUP_DEADBAND_HI            3   /* deg >= 0: HiBand = Setpoint + DeadbandHi               */
@@ -86,13 +101,15 @@ extern "C" {
 #define TC_SETUP_FILTER_POINTS         14   /* 1..64 samples in each average; anything else -> 4      */
 #define TC_SETUP_FEEDBACK_ENABLE       15   /* bool   compare DO feedback with the commands           */
 #define TC_SETUP_RELAY_FEEDBACK_TIMEOUT 16  /* ms, feedback mismatch time before a fault              */
+#define TC_SETUP_OPERATING_CONDITION_TIMEOUT 17 /* ms, permissive lost during control for this long -> OperatingConditionFault (R10.7); does not delay the relay shutdown */
 
 /* ------------------------------------------------------------------------ */
 /* diagArray indexes (TcGetDiag)                                             */
 /* ------------------------------------------------------------------------ */
-#define TC_DIAG_CONTROL_TEMP            0   /* raw value control acts on (sensor 2 offset-corrected); NaN before the first CheckTemp */
+/* Indexes 0..24 are unchanged from v3; 25..27 are new in v4. */
+#define TC_DIAG_CONTROL_TEMP            0   /* raw value control acts on (sensor 2 offset-corrected); NaN before the first active CheckTemp */
 #define TC_DIAG_ACTIVE_SENSOR           1   /* 1 or 2                                                  */
-#define TC_DIAG_TEMP1_RAW               2   /* last temp1 as supplied                                  */
+#define TC_DIAG_TEMP1_RAW               2   /* last temp1 as supplied (also mirrored while stopped)    */
 #define TC_DIAG_TEMP2_RAW               3   /* last temp2 as supplied (NaN when Temp2Enable = 0)       */
 #define TC_DIAG_TEMP2_CORRECTED         4   /* temp2 + Temp2Offset                                     */
 #define TC_DIAG_TEMP1_AVG               5   /* moving average of in-range temp1 samples (comparison only); NaN until one exists */
@@ -109,22 +126,29 @@ extern "C" {
 #define TC_DIAG_TEMP2_OOR_ACCUM_MS     16   /* sensor 2 leaky accumulator                              */
 #define TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR 17 /* in-range -> out-of-range transitions in the last 60 min */
 #define TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR 18
-#define TC_DIAG_STATUS_MIRROR          19   /* status from the last CheckTemp (or Init/Reset)          */
-#define TC_DIAG_WARNING_MIRROR         20   /* warning from the last CheckTemp (or Init/Reset)         */
-#define TC_DIAG_DO_HEATER_MIRROR       21   /* last heater command                                     */
-#define TC_DIAG_DO_COOLER_MIRROR       22   /* last cooler command                                     */
+#define TC_DIAG_STATUS_MIRROR          19   /* status of the last Init/Start/Stop/CheckTemp/Reset      */
+#define TC_DIAG_WARNING_MIRROR         20   /* warning of the last Init/Start/Stop/CheckTemp/Reset     */
+#define TC_DIAG_DO_HEATER_MIRROR       21   /* internal heater command after that call                 */
+#define TC_DIAG_DO_COOLER_MIRROR       22   /* internal cooler command after that call                 */
 #define TC_DIAG_APPLIED_FILTER_POINTS  23   /* FilterPoints actually in use                            */
 #define TC_DIAG_ZONE_INITIALIZED       24   /* 1 once a setup has been loaded                          */
+#define TC_DIAG_RUN_PERMISSIVE         25   /* 0/1 last permissive evaluated by an enabled, non-faulted Start or CheckTemp; NaN after Init/Reset until then */
+#define TC_DIAG_OPERATING_CONDITION_REMAIN_MS 26 /* ms before a pending permissive loss becomes OperatingConditionFault; 0 when not pending */
+#define TC_DIAG_CONTROLLER_STARTED     27   /* 1 while a Start is accepted and control may run; 0 when disabled, stopped, blocked, pending, tripped or faulted */
 
 /* ------------------------------------------------------------------------ */
-/* status codes: 0..5 are states, >= 10 are faults (stand shutdown)          */
+/* status codes: 0..9 are states, >= 10 are faults (stand shutdown)          */
 /* ------------------------------------------------------------------------ */
 #define TC_ST_TEMP_CTRL_DISABLED   0   /* TempCtrlEnable = 0 or no setup loaded; relays 0, nothing evaluated */
-#define TC_ST_TEMP_AT_SETPT        1   /* enabled, relays off, ControlTemp inside the deadband        */
+#define TC_ST_TEMP_AT_SETPT        1   /* started, relays off, ControlTemp inside the deadband        */
 #define TC_ST_HEATER_ON            2   /* heating commanded (held through the at-setpoint countdown)  */
 #define TC_ST_COOLER_ON            3   /* cooling commanded                                           */
 #define TC_ST_HEAT_PENDING         4   /* relays off, below LoBand, deadband countdown running        */
 #define TC_ST_COOL_PENDING         5   /* relays off, above HiBand, deadband countdown running        */
+#define TC_ST_IDLE_STOPPED         6   /* valid enabled setup, not started (after Init / Reset / Stop); relays 0 */
+#define TC_ST_IDLE_START_BLOCKED   7   /* Start was refused because runPermissive = 0; relays 0, no countdown */
+#define TC_ST_OPERATING_CONDITION_PENDING 8 /* permissive lost while active: relays 0, fault countdown running */
+#define TC_ST_IDLE_OPERATING_CONDITION_TRIPPED 9 /* permissive loss stopped control, then recovered or was stopped before the timeout; cause latched until Start/Reset/Init */
 #define TC_ST_FAULT_FIRST         10   /* every code >= 10 is a fault                                 */
 #define TC_ST_TEMP1_FAIL_HIGH     10   /* single-sensor mode: sensor 1 failed high (incl. NaN/Inf)    */
 #define TC_ST_TEMP1_FAIL_LOW      11   /* single-sensor mode: sensor 1 failed low                     */
@@ -133,6 +157,7 @@ extern "C" {
 #define TC_ST_CONFIG_FAULT        14   /* Init config check failed with Enable = 1; only a passing Init clears it */
 #define TC_ST_HEATER_FB_FAULT     15   /* heater DO feedback mismatched for RelayFeedbackTimeout      */
 #define TC_ST_COOLER_FB_FAULT     16   /* cooler DO feedback mismatched for RelayFeedbackTimeout      */
+#define TC_ST_OPERATING_CONDITION_FAULT 17 /* permissive stayed false for OperatingConditionTimeout after being lost during control */
 
 /* ------------------------------------------------------------------------ */
 /* warning codes: one value, the lowest active code wins                     */
@@ -145,35 +170,37 @@ extern "C" {
 #define TC_WN_TEMP_DISAGREE        5   /* disagreement held for TempCompareTimeout / 10               */
 #define TC_WN_RUNNING_ON_TEMP2     6   /* sensor 1 failed, control moved to sensor 2 (until Reset/Init) */
 #define TC_WN_CONFIG_INVALID       7   /* Init with Enable = 0 failed the config check                */
+#define TC_WN_OPERATING_CONDITION_NOT_MET 8 /* runPermissive = 0 while Start is blocked or the zone is pending / tripped; clears when it is true again */
 
 /* ------------------------------------------------------------------------ */
 /* Functions                                                                 */
 /* ------------------------------------------------------------------------ */
 
-/* Library version: (major << 16) | (minor << 8) | patch; 0x030000 for 3.0.0. */
+/* Library version: (major << 16) | (minor << 8) | patch; 0x040000 for 4.0.0. */
 TC_API int32_t TcVersion(void);
-/* Required setupArray length (17). */
+/* Required setupArray length (18). */
 TC_API int32_t TcSetupCount(void);
-/* Required diagArray length (25). */
+/* Required diagArray length (28). */
 TC_API int32_t TcDiagCount(void);
 
 /*
  * TcInit - load or replace a zone's setup (also the way to change any
- * parameter at run time). setupArray has TC_SETUP_COUNT elements in the
- * TC_SETUP_* order: 0 TempCtrlEnable, 1 TempUnits, 2 Setpoint, 3 DeadbandHi,
+ * parameter). setupArray has TC_SETUP_COUNT elements in the TC_SETUP_*
+ * order: 0 TempCtrlEnable, 1 TempUnits, 2 Setpoint, 3 DeadbandHi,
  * 4 DeadbandLo, 5 HiLimit, 6 LoLimit, 7 ErrorTimeout, 8 DeadbandTimeout,
  * 9 AtSetPtTimeout, 10 Temp2Enable, 11 Temp2Offset, 12 Temp2Tolerance,
  * 13 TempCompareTimeout, 14 FilterPoints, 15 FeedbackEnable,
- * 16 RelayFeedbackTimeout.
+ * 16 RelayFeedbackTimeout, 17 OperatingConditionTimeout.
  *
- * Validates and stores the setup, sets the time reference and clears faults,
- * warnings, averages, accumulators, hourly counts, countdowns and
- * Initial_HC_Flag; ActiveSensor becomes 1 (R9.1). Relay commands are kept
- * only when the zone was running, the new setup has Enable = 1 and passes
- * the config check; otherwise both start at 0 (R9.3). A failed config
- * check with Enable = 1 latches TC_ST_CONFIG_FAULT (only a passing Init
- * clears it); with Enable = 0 it reports TC_WN_CONFIG_INVALID (R9.5).
- * Allowed at any time, including on a stopped zone.
+ * Validates and stores the setup, sets the time reference and clears
+ * faults, warnings, averages, accumulators, hourly counts, countdowns and
+ * Initial_HC_Flag; ActiveSensor becomes 1 (R9.1). Both relay commands
+ * become 0 and the zone is left STOPPED: a passing enabled Init returns
+ * TC_ST_IDLE_STOPPED and control does not run until TcStart (R10.2). A
+ * failed config check with Enable = 1 latches TC_ST_CONFIG_FAULT (only a
+ * passing Init clears it); with Enable = 0 it reports TC_WN_CONFIG_INVALID
+ * (R9.5). Init returns no relay commands, so on a zone that may be active
+ * call TcStop first and apply its zero commands to the outputs.
  *
  *   nowMs    LabVIEW Tick Count (ms); free-running, only differences are used
  *   status   TC_ST_* after the call
@@ -184,31 +211,81 @@ TC_API int32_t TcInit(int32_t zone, uint32_t nowMs,
                       int32_t* status, int32_t* warning);
 
 /*
+ * TcStart - request control to run (R10.3). Order of evaluation: no
+ * setup or Enable = 0 -> TC_ST_TEMP_CTRL_DISABLED; a latched fault is
+ * preserved; already started -> no-op returning the current status (the
+ * permissive is not evaluated); runPermissive = 0 -> the Start is refused:
+ * TC_ST_IDLE_START_BLOCKED (or the existing PENDING / TRIPPED state is
+ * kept) with TC_WN_OPERATING_CONDITION_NOT_MET; otherwise the Start is
+ * accepted: countdowns, averages and Initial_HC_Flag are cleared, the time
+ * reference is set to nowMs, sensor failures / accumulators / hourly counts
+ * are kept, both relays stay 0 until the next TcCheckTemp decides, and the
+ * status is TC_ST_TEMP_AT_SETPT until that first CheckTemp. Always TC_OK
+ * on a valid call; a refused Start is not an error. Nothing ever restarts
+ * control except this call.
+ *
+ *   runPermissive  host's combined operating-condition input, 0 = false
+ */
+TC_API int32_t TcStart(int32_t zone, uint32_t nowMs,
+                       int32_t runPermissive,
+                       int32_t* status, int32_t* warning);
+
+/*
+ * TcStop - normal stop, never a fault (R10.4). Returns doHeater = 0 and
+ * doCooler = 0 for the host to apply at once, clears Started and the
+ * control / feedback countdowns, sets the time reference, keeps the setup,
+ * sensor failures, accumulators, hourly counts and any latched fault.
+ * Status: TC_ST_IDLE_STOPPED from active / idle / blocked; the trip cause
+ * TC_ST_IDLE_OPERATING_CONDITION_TRIPPED is kept from pending / tripped (the
+ * fault countdown is cancelled); a fault and its frozen warning are kept;
+ * TC_ST_TEMP_CTRL_DISABLED from a disabled or uninitialised zone.
+ */
+TC_API int32_t TcStop(int32_t zone, uint32_t nowMs,
+                      int32_t* doHeater, int32_t* doCooler,
+                      int32_t* status, int32_t* warning);
+
+/*
  * TcCheckTemp - one control tick for one zone (nominally every 100 ms).
  *   temp1, temp2   raw scaled temperatures in the configured unit
  *                  (temp2 ignored when Temp2Enable = 0; NaN/Inf count as
  *                  out of range high)
  *   diHeaterFB,    read-back of the heater / cooler digital output, 0/1
  *   diCoolerFB     (ignored when FeedbackEnable = 0)
+ *   runPermissive  live operating-condition input, 0 = false (R10.7)
  *   doHeater,      relay commands for this tick, 0/1, never both 1
  *   doCooler
  *   status         TC_ST_* (>= 10 is a fault: relays 0, latched until Reset/Init)
  *   warning        TC_WN_*
  * A zone with no setup, or with Enable = 0, returns TC_OK with status 0,
- * relays 0 and takes no action (R2). No relay changes state because of one
- * sample: every transition is time-qualified (R7.4).
+ * relays 0 and takes no action (R2). A zone that is not started returns
+ * relays 0 and evaluates nothing except the permissive countdown of a
+ * pending trip (R10.6); the raw temperatures are still mirrored into the
+ * diagnostics. While started: sensor, comparison and feedback faults are
+ * evaluated first (an existing fault maturing this tick wins), then a false
+ * runPermissive de-energizes BOTH relays on this very sample, clears
+ * Started and enters TC_ST_OPERATING_CONDITION_PENDING; the pending zone
+ * faults with TC_ST_OPERATING_CONDITION_FAULT only if the permissive stays
+ * false for OperatingConditionTimeout, and becomes
+ * TC_ST_IDLE_OPERATING_CONDITION_TRIPPED (no fault, no restart) if it
+ * recovers first. Apart from that de-energization no relay changes state
+ * because of one sample: every transition is time-qualified (R7.4, R10.8).
  */
 TC_API int32_t TcCheckTemp(int32_t zone, uint32_t nowMs,
                            double temp1, double temp2,
                            int32_t diHeaterFB, int32_t diCoolerFB,
+                           int32_t runPermissive,
                            int32_t* doHeater, int32_t* doCooler,
                            int32_t* status, int32_t* warning);
 
 /*
  * TcReset - clear faults, warnings, averages, accumulators, hourly counts,
- * countdowns and Initial_HC_Flag; keep the stored setup; relays 0;
- * ActiveSensor 1; new time reference (R9.2). Does not clear
- * TC_ST_CONFIG_FAULT. Harmless on a zone with no setup.
+ * countdowns, Initial_HC_Flag and the blocked / pending / tripped lifecycle
+ * states; keep the stored setup; relays 0; ActiveSensor 1; new time
+ * reference (R9.2, R10.5). Leaves the zone STOPPED (TC_ST_IDLE_STOPPED):
+ * control resumes only after TcStart. Does not clear TC_ST_CONFIG_FAULT.
+ * Harmless on a zone with no setup. Reset returns no relay commands, so on
+ * a non-faulted zone that may be active call TcStop first and apply its
+ * zero commands; a faulted zone already returned zero commands.
  */
 TC_API int32_t TcReset(int32_t zone, uint32_t nowMs,
                        int32_t* status, int32_t* warning);
@@ -223,8 +300,11 @@ TC_API int32_t TcReset(int32_t zone, uint32_t nowMs,
  * 15 Temp1OorAccumMs, 16 Temp2OorAccumMs, 17 Temp1OorEventsPerHour,
  * 18 Temp2OorEventsPerHour, 19 StatusMirror, 20 WarningMirror,
  * 21 doHeaterMirror, 22 doCoolerMirror, 23 AppliedFilterPoints,
- * 24 ZoneInitialized. diagLen must be >= TC_DIAG_COUNT. Never advances
- * state; may be called at any rate.
+ * 24 ZoneInitialized, 25 RunPermissive, 26 OperatingConditionRemainMs,
+ * 27 ControllerStarted. diagLen must be >= TC_DIAG_COUNT; elements beyond
+ * TC_DIAG_COUNT are not written. Never advances state (no countdown moves);
+ * may be called at any rate, but not concurrently with another call on
+ * the same zone.
  */
 TC_API int32_t TcGetDiag(int32_t zone, double* diagArray, int32_t diagLen);
 
