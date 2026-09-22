@@ -1,13 +1,16 @@
 @echo off
 setlocal
 :: package_dist.bat - stage dist\TempCtl_vX.Y.Z (the CONTROLLER package: libraries,
-:: header, DBC + tables, the vendored CanTp subset, docs, sources), run the release
+:: header, DBC + tables + ECD, the vendored CanTp subset, docs, sources), run the release
 :: gates into TESTLOG.txt, write DEPENDENCIES.txt + MANIFEST.txt, zip (AES-256 + plain).
 :: The simulator is a separate package: see package_sim.bat.
 :: Usage: package_dist.bat X.Y.Z [password]
-:: Run first:  build.bat all   python tools\make_tempctl_dbc.py --tables
-:: Optional:   set TEMPCTL_PYLIBS=<dir with cantools> for the oracle
+:: Run first:  build.bat all   python tools\make_tempctl_dbc.py --tables --ecd
+:: Optional:   set TEMPCTL_PYLIBS=<dir with cantools> for the oracle and the regeneration check
 :: Everything under docs\package\ ships flat at the package root.
+:: Target execution logs (owner-run): docs\testlogs\pi-*.txt, crio-*.txt, myrio-*.txt.
+:: Windows x64/x86 gates, the regeneration check and the oracle are hard gates; a Linux target
+:: without a log is recorded in TESTLOG.txt as "built and inspected, not executed" (V4-D5).
 
 set "VERSION=%~1"
 set "PASSWORD=%~2"
@@ -23,6 +26,8 @@ set "ROOT_NOSLASH=%ROOT:~0,-1%"
 set "OUT=%ROOT%dist\TempCtl_v%VERSION%"
 set "ZIP=%ROOT%dist\TempCtl_v%VERSION%.zip"
 set "ZIP_PLAIN=%ROOT%dist\TempCtl_v%VERSION%_unencrypted.zip"
+set "PYARGS="
+if defined TEMPCTL_PYLIBS set "PYARGS=--pylibs "%TEMPCTL_PYLIBS%""
 
 echo ============================================================
 echo  Packaging TempCtl v%VERSION%  (controller package)
@@ -39,16 +44,20 @@ echo 7-Zip: %SEVENZIP%
 for %%F in ("build\win-x64\tempctl.dll" "build\win-x64\tempctl.lib" "build\win-x64\test_tempctl.exe"
             "build\win-x86\tempctl.dll" "build\win-x86\tempctl.lib" "build\win-x86\test_tempctl.exe"
             "build\linux-x64\libtempctl.so" "build\linux-x64\test_tempctl"
+            "build\linux-armhf\libtempctl.so" "build\linux-armhf\test_tempctl"
             "build\linux-arm64\libtempctl.so" "build\linux-arm64\test_tempctl"
             "third_party\cantp\cantp.h" "third_party\cantp\cantp.dll" "third_party\cantp\VENDORED.txt"
-            "third_party\cantp\tools\dbc2tables.py"
-            "dbc\tempctl.dbc" "dbc\tables\TempCtl.json" "dbc\tables\TempCtl.sig.csv"
+            "third_party\cantp\tools\dbc2tables.py" "third_party\cantp\tools\ecdflat.py"
+            "third_party\cantp\linux-armhf\libcantp.so"
+            "dbc\tempctl.dbc" "dbc\tempctl.ecd" "dbc\tables\TempCtl.json" "dbc\tables\TempCtl.sig.csv"
             "src\tempctl.h" "LICENSE" "CHANGELOG.md"
             "docs\package\DISTRIBUTION_README.md" "docs\package\TEMPCTL_PACKAGE_GUIDE.md"
             "docs\package\LABVIEW_INTEGRATION.md" "docs\package\TESTING.md"
+            "docs\package\TEMPCTL-SPEC-v%VERSION%.md" "docs\package\TEMPCTL-CAPABILITY-v%VERSION%.md"
+            "docs\package\TEMPCTL-v%VERSION%-API-AND-LABVIEW-GUIDE.md"
             "tests\oracle_test.py" "tools\elfinfo.py" "tools\make_tempctl_dbc.py") do (
     if not exist "%ROOT%%%~F" (
-        echo ERROR: %%~F not found. Run build.bat all and make_tempctl_dbc.py --tables first.
+        echo ERROR: %%~F not found. Run build.bat all and make_tempctl_dbc.py --tables --ecd first.
         exit /b 1
     )
 )
@@ -63,7 +72,7 @@ if exist "%OUT%" rmdir /s /q "%OUT%"
 if exist "%ZIP%" del /q "%ZIP%"
 if exist "%ZIP_PLAIN%" del /q "%ZIP_PLAIN%"
 if not exist "%ROOT%dist" mkdir "%ROOT%dist"
-mkdir "%OUT%" "%OUT%\x86" "%OUT%\linux-x64" "%OUT%\linux-arm64" "%OUT%\examples" "%OUT%\src" "%OUT%\tools" "%OUT%\dbc"
+mkdir "%OUT%" "%OUT%\x86" "%OUT%\linux-x64" "%OUT%\linux-armhf" "%OUT%\linux-arm64" "%OUT%\examples" "%OUT%\src" "%OUT%\tools" "%OUT%\dbc"
 
 echo Copying files...
 copy "%ROOT%build\win-x64\tempctl.dll"        "%OUT%\" >nul
@@ -74,18 +83,27 @@ copy "%ROOT%build\win-x86\tempctl.lib"        "%OUT%\x86\" >nul
 copy "%ROOT%build\win-x86\test_tempctl.exe"   "%OUT%\x86\" >nul
 copy "%ROOT%build\linux-x64\libtempctl.so"    "%OUT%\linux-x64\" >nul
 copy "%ROOT%build\linux-x64\test_tempctl"     "%OUT%\linux-x64\" >nul
+copy "%ROOT%build\linux-armhf\libtempctl.so"  "%OUT%\linux-armhf\" >nul
+copy "%ROOT%build\linux-armhf\test_tempctl"   "%OUT%\linux-armhf\" >nul
 copy "%ROOT%build\linux-arm64\libtempctl.so"  "%OUT%\linux-arm64\" >nul
 copy "%ROOT%build\linux-arm64\test_tempctl"   "%OUT%\linux-arm64\" >nul
-copy "%ROOT%src\tempctl.h"                    "%OUT%\" >nul
+:: the same header next to every binary (V4-11), byte-identical, verified below
+for %%D in ("" "x86\" "linux-x64\" "linux-armhf\" "linux-arm64\") do copy "%ROOT%src\tempctl.h" "%OUT%\%%~D" >nul
+for %%D in ("x86\" "linux-x64\" "linux-armhf\" "linux-arm64\") do (
+    fc /b "%OUT%\tempctl.h" "%OUT%\%%~Dtempctl.h" >nul
+    if errorlevel 1 ( echo ERROR: header copy %%~Dtempctl.h differs. & exit /b 1 )
+)
 :: shipped documentation = docs\package\*.md, flat at the package root
 copy "%ROOT%docs\package\*.md"                "%OUT%\" >nul
 copy "%ROOT%CHANGELOG.md"                     "%OUT%\" >nul
 copy "%ROOT%LICENSE"                          "%OUT%\LICENSE.txt" >nul
 if exist "%ROOT%docs\testlogs" xcopy "%ROOT%docs\testlogs" "%OUT%\docs\testlogs\" /s /q /i >nul
-:: vendored CanTp subset (header, binaries, dbc2tables.py, license, VENDORED.txt), unmodified
+:: vendored CanTp subset (header, binaries, dbc2tables.py, ecdflat.py, license, VENDORED.txt), unmodified
 xcopy "%ROOT%third_party\cantp" "%OUT%\third_party\cantp\" /s /q /i >nul
-:: DBC + tables
+if exist "%OUT%\third_party\cantp\tools\__pycache__" rmdir /s /q "%OUT%\third_party\cantp\tools\__pycache__"
+:: DBC + ECD + tables
 copy "%ROOT%dbc\tempctl.dbc"                  "%OUT%\dbc\" >nul
+copy "%ROOT%dbc\tempctl.ecd"                  "%OUT%\dbc\" >nul
 xcopy "%ROOT%dbc\tables" "%OUT%\dbc\tables\" /s /q /i >nul
 :: examples + tools
 copy "%ROOT%tests\oracle_test.py"             "%OUT%\examples\" >nul
@@ -114,18 +132,26 @@ echo ============ x86 gate ============ >> "%OUT%\TESTLOG.txt"
 if %ERRORLEVEL% neq 0 ( echo ERROR: x86 gate failed. Not packaging a broken build. & exit /b 1 )
 
 echo. >> "%OUT%\TESTLOG.txt"
-echo ============ DBC / table regeneration check ============ >> "%OUT%\TESTLOG.txt"
-python "%ROOT%tools\make_tempctl_dbc.py" --out "%TEMP%\tempctl_check.dbc" >> "%OUT%\TESTLOG.txt" 2>&1
-if %ERRORLEVEL% neq 0 ( echo ERROR: DBC generator failed. & exit /b 1 )
-fc /b "%TEMP%\tempctl_check.dbc" "%ROOT%dbc\tempctl.dbc" >nul
-if %ERRORLEVEL% neq 0 ( echo ERROR: dbc\tempctl.dbc is stale; rerun make_tempctl_dbc.py --tables & exit /b 1 )
-echo dbc\tempctl.dbc matches the generator output. >> "%OUT%\TESTLOG.txt"
+echo ============ DBC / table / ECD regeneration check ============ >> "%OUT%\TESTLOG.txt"
+if exist "%TEMP%\tempctl_check" rmdir /s /q "%TEMP%\tempctl_check"
+mkdir "%TEMP%\tempctl_check"
+set "PYTHONPATH_SAVED=%PYTHONPATH%"
+if defined TEMPCTL_PYLIBS set "PYTHONPATH=%TEMPCTL_PYLIBS%;%PYTHONPATH%"
+python "%ROOT%tools\make_tempctl_dbc.py" --out "%TEMP%\tempctl_check\tempctl.dbc" --tables --ecd >> "%OUT%\TESTLOG.txt" 2>&1
+set "GEN_RC=%ERRORLEVEL%"
+set "PYTHONPATH=%PYTHONPATH_SAVED%"
+if %GEN_RC% neq 0 ( echo ERROR: DBC / ECD generator failed. & exit /b 1 )
+fc /b "%TEMP%\tempctl_check\tempctl.dbc" "%ROOT%dbc\tempctl.dbc" >nul
+if %ERRORLEVEL% neq 0 ( echo ERROR: dbc\tempctl.dbc is stale; rerun make_tempctl_dbc.py --tables --ecd & exit /b 1 )
+fc /b "%TEMP%\tempctl_check\tempctl.ecd" "%ROOT%dbc\tempctl.ecd" >nul
+if %ERRORLEVEL% neq 0 ( echo ERROR: dbc\tempctl.ecd is stale; rerun make_tempctl_dbc.py --tables --ecd & exit /b 1 )
+fc /b "%TEMP%\tempctl_check\tables\TempCtl.json" "%ROOT%dbc\tables\TempCtl.json" >nul
+if %ERRORLEVEL% neq 0 ( echo ERROR: dbc\tables\TempCtl.json is stale; rerun make_tempctl_dbc.py --tables --ecd & exit /b 1 )
+echo dbc\tempctl.dbc, dbc\tempctl.ecd and dbc\tables\TempCtl.json match the generator output. >> "%OUT%\TESTLOG.txt"
 
 echo. >> "%OUT%\TESTLOG.txt"
-echo ============ Python oracle (tempctl.dll + cantp.dll vs cantools) ============ >> "%OUT%\TESTLOG.txt"
-set "ORACLE_ARGS="
-if defined TEMPCTL_PYLIBS set "ORACLE_ARGS=--pylibs "%TEMPCTL_PYLIBS%""
-python "%ROOT%tests\oracle_test.py" %ORACLE_ARGS% >> "%OUT%\TESTLOG.txt" 2>&1
+echo ============ Python oracle (tempctl.dll + cantp.dll vs cantools; tables and ECD) ============ >> "%OUT%\TESTLOG.txt"
+python "%ROOT%tests\oracle_test.py" %PYARGS% >> "%OUT%\TESTLOG.txt" 2>&1
 if %ERRORLEVEL% neq 0 (
     echo WARNING: oracle test did not pass or could not run ^(python/cantools missing?^). See TESTLOG.txt.
     echo   ^(oracle test skipped or failed - see above^) >> "%OUT%\TESTLOG.txt"
@@ -133,14 +159,20 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo. >> "%OUT%\TESTLOG.txt"
-echo ============ Linux ============ >> "%OUT%\TESTLOG.txt"
-echo The closed-loop runs on the Raspberry Pi bench (linux-arm64 tempctl + cantp under the >> "%OUT%\TESTLOG.txt"
-echo simulator) are recorded in the TempSim package ^(TESTLOG.txt and testlogs\ there^). >> "%OUT%\TESTLOG.txt"
+echo ============ Linux targets ============ >> "%OUT%\TESTLOG.txt"
+echo Every .so and test_tempctl was cross-built from the same source and ELF-inspected here ^(DEPENDENCIES.txt^). >> "%OUT%\TESTLOG.txt"
+echo Execution on the target is recorded by a dated log in docs\testlogs\ ^(owner-run^): >> "%OUT%\TESTLOG.txt"
+call :TargetStatus "linux-arm64 - Raspberry Pi, aarch64" "pi-test_tempctl-*.txt"
+call :TargetStatus "linux-x64 - Intel cRIO, NI Linux RT x86_64" "crio-test_tempctl-*.txt"
+call :TargetStatus "linux-armhf - myRIO-1900, NI Linux RT 32-bit ARM" "myrio-test_tempctl-*.txt"
+echo The closed-loop simulator runs on the Raspberry Pi bench ^(linux-arm64 tempctl + cantp under TempSim^) are >> "%OUT%\TESTLOG.txt"
+echo recorded in the TempSim package ^(TESTLOG.txt and testlogs\ there^). LabVIEW and LabVIEW RT wrapper tests are >> "%OUT%\TESTLOG.txt"
+echo owner-executed ^(TESTING.md^). >> "%OUT%\TESTLOG.txt"
 if exist "%ROOT%docs\testlogs\*.txt" (
     for %%L in ("%ROOT%docs\testlogs\*.txt") do (
+        echo. >> "%OUT%\TESTLOG.txt"
         echo --- %%~nxL --- >> "%OUT%\TESTLOG.txt"
         type "%%~L" >> "%OUT%\TESTLOG.txt"
-        echo. >> "%OUT%\TESTLOG.txt"
     )
 )
 
@@ -148,7 +180,7 @@ echo Generating DEPENDENCIES.txt and MANIFEST.txt...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\report_package_assets.ps1" ^
     -PackageDir "%OUT%" -Version "%VERSION%" -Product TempCtl -ElfInfoScript "%ROOT%tools\elfinfo.py" ^
     -PeFiles "tempctl.dll;x86\tempctl.dll;test_tempctl.exe;x86\test_tempctl.exe;third_party\cantp\cantp.dll;third_party\cantp\x86\cantp.dll" ^
-    -ElfFiles "linux-x64\libtempctl.so;linux-x64\test_tempctl;linux-arm64\libtempctl.so;linux-arm64\test_tempctl;third_party\cantp\linux-x64\libcantp.so;third_party\cantp\linux-arm64\libcantp.so;third_party\cantp\linux-armhf\libcantp.so"
+    -ElfFiles "linux-x64\libtempctl.so;linux-x64\test_tempctl;linux-armhf\libtempctl.so;linux-armhf\test_tempctl;linux-arm64\libtempctl.so;linux-arm64\test_tempctl;third_party\cantp\linux-x64\libcantp.so;third_party\cantp\linux-armhf\libcantp.so;third_party\cantp\linux-arm64\libcantp.so"
 if %ERRORLEVEL% neq 0 ( echo ERROR: asset report generation failed. & exit /b 1 )
 
 echo Creating encrypted zip...
@@ -176,6 +208,17 @@ echo   Zip:    %ZIP%
 echo   Plain:  %ZIP_PLAIN%
 echo.
 dir /b "%OUT%"
+exit /b 0
+
+:: ---- %1 target description, %2 log file pattern under docs\testlogs ----------------------
+:TargetStatus
+set "TS_FOUND="
+for %%L in ("%ROOT%docs\testlogs\%~2") do set "TS_FOUND=%%~nxL"
+if defined TS_FOUND (
+    echo   %~1: EXECUTED on the target, log %TS_FOUND% ^(below^) >> "%OUT%\TESTLOG.txt"
+) else (
+    echo   %~1: built and ELF-inspected here, NOT executed on the target in this release ^(V4-D5^) >> "%OUT%\TESTLOG.txt"
+)
 exit /b 0
 
 :Find7Zip

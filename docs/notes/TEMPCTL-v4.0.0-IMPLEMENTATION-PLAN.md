@@ -144,3 +144,20 @@ Each phase ends with its gate green before the next starts.
 - [ ] Run `linux-x64/test_tempctl` on the Intel cRIO, log into `docs/testlogs/crio-test_tempctl-<date>.txt`.
 - [ ] Import `tempctl.h` + x86 DLL in 32-bit LabVIEW 2026 with the §12 settings; smoke test Version -> SetupCount -> DiagCount -> Init -> Start -> CheckTemp -> Stop -> Reset -> GetDiag; record in `TESTLOG.txt`.
 - [ ] LabVIEW RT wrapper run on cRIO and (if possible) myRIO.
+
+## 5. Status (2026-09-22, end of the implementation session)
+
+| Phase | Result |
+|---|---|
+| 0 | fixture work committed (TempSim 2.2.1), handoff + plan committed |
+| 1 | controller v4.0.0: 2186 checks green on win-x64, win-x86 and the Pi (arm64); linux-armhf built and ELF-inspected (EABI v5 hard float, no libc import) |
+| 2 | DBC 44 bytes, tables, tempctl.ecd generated and cross-checked; oracle 1346 arrays ALL OK, table slot == ECD slot |
+| 3 | Pi log docs/testlogs/pi-test_tempctl-2026-09-22.txt; cRIO / myRIO execution pending (owner, V4-D5) |
+| 4 | TempSim 3.0.0: 29 scenarios / 208 expectations on Windows and the Pi, 60 CSV/.ncl byte-identical; screenshot gate green |
+| 5 | all package documents rewritten for v4; v3 spec / capability moved to docs/notes |
+| 6 | dist\TempCtl_v4.0.0 (+ zips) and dist\TempSim_v3.0.0_{win-x64,linux-x64,linux-arm64} (+ zips) built by the gates; not yet tagged / pushed / released |
+
+Open (owner): the checklist of section 4 (myRIO glibc, myRIO and cRIO
+native runs, LabVIEW import + smoke test, LabVIEW RT runs), then re-run
+`package_dist.bat 4.0.0` so `TESTLOG.txt` records the target logs, tag,
+push and release.

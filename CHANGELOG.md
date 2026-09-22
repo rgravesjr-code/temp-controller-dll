@@ -2,6 +2,98 @@
 
 ---
 
+## v4.0.0 - 2026-09-22
+
+Major revision from the requirements-change handoff of 2026-09-22
+(`TEMPCTL-SPEC-v4.0.0.md`, `TEMPCTL-CAPABILITY-v4.0.0.md`,
+`TEMPCTL-v4.0.0-API-AND-LABVIEW-GUIDE.md`): an explicit Start / Stop
+lifecycle and a live run permissive on top of v3.0.0 with Amendment A.
+`TcVersion()` reports 0x040000, `TcSetupCount()` 18, `TcDiagCount()` 28.
+**Not backwards compatible with v3** (see Migration below).
+
+- **New exports (V4-1, V4-2).** `TcStart(zone, nowMs, runPermissive, ...)`
+  starts control when the zone is enabled, not faulted and the permissive
+  is true, otherwise refuses it as `IdleStartBlocked` (7) with warning
+  `OperatingConditionNotMet` (8), `TC_OK` either way; Start while started is
+  a no-op. `TcStop(zone, nowMs, &doHeater, &doCooler, ...)` returns 0, 0 at
+  once without a fault, keeps the setup, sensor history and any fault, and
+  keeps a permissive-trip cause (`IdleOperatingConditionTripped`).
+- **Live permissive (V4-3 to V4-7).** `TcCheckTemp` gains `runPermissive`
+  after the two feedback inputs. While running, the first false sample
+  de-energizes both relays (`OperatingConditionPending`, 8) and starts the
+  new setup value `OperatingConditionTimeout` (index 17); recovery before
+  the timeout gives `IdleOperatingConditionTripped` (9), no fault, no
+  restart; a sustained loss gives `OperatingConditionFault` (17). A false
+  permissive on a stopped, blocked or tripped zone never counts down.
+- **Init and Reset leave the zone stopped (V4-9).** A passing enabled Init
+  returns `IdleStopped` (6) with both relays 0; the v3 relay keeping across
+  a re-Init (R9.3) is removed. Reset clears faults and history and leaves
+  `IdleStopped`; control resumes only after `TcStart`. Because neither
+  returns DO values, the host sequence for an active zone is `TcStop` ->
+  apply the zeros -> `TcInit` / `TcReset` -> `TcStart`.
+- **While stopped** nothing is evaluated (no accumulation, averaging,
+  comparison, control or feedback; warnings 1-5 cleared); the raw readings
+  are mirrored into the diagnostics and the hourly rings age in wall time.
+  Start clears the averages and `Initial_HC_Flag`, keeps sensor failures,
+  accumulators and hourly counts, and re-bases the time reference so
+  stopped time never feeds a countdown.
+- **Fault precedence (V4-8):** config -> sensor -> disagreement -> heater
+  feedback -> cooler feedback -> operating condition; an existing fault
+  maturing on the tick the permissive is lost wins; a latched fault is
+  never overwritten; Start and Stop on a faulted zone change nothing.
+- **Diagnostics (V4-10):** `RunPermissive` (25; NaN until the first
+  evaluation), `OperatingConditionRemainMs` (26), `ControllerStarted` (27);
+  the status / warning / DO mirrors follow every stateful call.
+- **CAN (V4-15):** the message is **44 bytes** (was 55): the eight
+  millisecond diagnostics are U16 (0..64255, 0xFFFF not available,
+  saturation on the wire only); PGN 65280 and id `0x18FF00FE` unchanged.
+  `dbc	empctl.ecd` is generated from the same signal model as the DBC and
+  the tables (channels in `TC_DIAG_*` order, `CanTp_DefineFlat` gives the
+  same slot; no reorder table) and read back for comparison.
+- **Targets (V4-11, V4-12):** new `linux-armhf` build for the myRIO-1900
+  (32-bit ARM, EABI v5 hard float, Cortex-A9; the library imports nothing
+  from libc); debug sections stripped from every Linux build; the same
+  `tempctl.h` in every binary folder, byte-identical and hashed.
+- **Tests:** `test_tempctl` 2186 checks (was 1516): the v3 groups under the
+  lifecycle plus R10 groups labelled with the handoff's section 13 items;
+  green on x64, x86 and the Raspberry Pi. Oracle rewritten for v4: 1346
+  arrays bit-identical with cantools, table slot and ECD slot identical, U16
+  boundary and saturation vectors, stale-table refusal.
+- **Simulator:** TempSim 3.0.0 (separate package) drives the v4 API with
+  Start / Stop / Run permissive and runs 29 scenarios (208 expectations),
+  the 14 lifecycle scenarios of the handoff included.
+- **Documents:** all package documents rewritten; new standalone
+  `TEMPCTL-v4.0.0-API-AND-LABVIEW-GUIDE.md`; the v3 spec and capability
+  moved to the repository's `docs
+otes`. CanTp remains v1.3.1
+  (`tools\ecdflat.py` added to the vendored subset; minimum CanTp 1.2.0).
+- **Release gates relaxed by owner decision (V4-D5, V4-D6):** the cRIO and
+  myRIO native runs and the LabVIEW / LabVIEW RT wrapper tests are
+  owner-executed; the package records for each Linux target whether it was
+  executed or only built and inspected. Windows x64 / x86 and the Pi remain
+  hard gates.
+
+### Migration from v3.0.0
+
+- Regenerate or update every wrapper VI against the v4 `tempctl.h`: the
+  `TcCheckTemp` signature changed (`runPermissive` inserted before the
+  outputs), `TcStart` and `TcStop` are new. v3 wrapper VIs must not be used
+  with a v4 binary.
+- Array constants: setup 17 -> **18** (append `OperatingConditionTimeout`,
+  >= 1 ms, at least two loop periods and longer than the longest expected
+  transient); diagnostics 25 -> **28**. `TcInit` rejects `setupLen` 17.
+- Add `TcStart` after `TcInit` (and after `TcReset`); a zone no longer
+  controls by itself. Add `TcStop` -> apply zeros before any `TcInit` or
+  non-fault `TcReset` of a zone that may be active.
+- Wire the host's combined operating condition to `runPermissive` on
+  `TcStart` and every `TcCheckTemp` (1 when no such condition exists).
+- Handle the new statuses 6..9 and 17 and warning 8 in the HMI and the
+  shutdown logic (>= 10 is still a fault).
+- CAN: replace the v3 `tempctl.dbc`, tables and any ECD with the v4 files;
+  the v3 55-byte layout cannot decode v4 frames (the U16 timers move every
+  later signal); `CanTp_OutputSize` is 192 (8 frames), was 216.
+- TempSim 2.x cannot drive a v4 binary; use TempSim 3.0.0.
+
 ## v3.0.0 - 2026-09-18
 
 Major revision from the v3.0.0 implementation handoff (rules decided with

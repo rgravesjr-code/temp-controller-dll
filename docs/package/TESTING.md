@@ -1,130 +1,132 @@
-# Testing Guide - TempCtl v3
+# Testing Guide - TempCtl v4
 
-Release gate for v3.0.0: `build.bat all` must finish with
-`TempCtl 3.0.0 unit tests: 1516 passed, 0 failed` for both the x64 and the
-x86 test executables and build both Linux targets; `tests\oracle_test.py`
-must print `ALL OK`. `package_dist.bat` re-runs the Windows gates, checks
-that `dbc\tempctl.dbc` matches the generator, runs the oracle, appends the
-Raspberry Pi log from `docs\testlogs\` and records everything in
-`TESTLOG.txt`; it refuses to package a failing build. The simulator has its
-own gate (`build_sim.bat` / `package_sim.bat`): the 16 scenarios with all of
-their expectations passing and zero unpack mismatches, plus the WPF
-screenshot run; its log is in the TempSim package.
+Release gate for v4.0.0: `build.bat all` must finish with
+`TempCtl 4.0.0 unit tests: 2186 passed, 0 failed` for both the x64 and the
+x86 test executables and build the three Linux targets; `python
+tools\make_tempctl_dbc.py --tables --ecd` must regenerate the DBC, the CanTp
+tables and the ECD without a difference (44-byte payload asserted, ECD read
+back and compared with the DBC and the tables); `tests\oracle_test.py` must
+print `ALL OK`. `package_dist.bat` re-runs the Windows gates, checks that
+`dbc\tempctl.dbc`, `dbc\tables\TempCtl.json` and `dbc\tempctl.ecd` match the
+generator, runs the oracle, appends the target logs from `docs\testlogs\`
+and records everything in `TESTLOG.txt`; it refuses to package a failing
+build. The simulator has its own gate (`build_sim.bat` / `package_sim.bat`):
+the 29 scenarios with all 208 expectations passing and zero unpack
+mismatches, the ECD cross-check, plus the WPF screenshot run; its log is in
+the TempSim package.
 
 ## What the gates cover
 
-### `tests\test_main.c` (1516 checks, compiled with `src\tempctl.c`)
+### `tests\test_main.c` (2186 checks, compiled with `src\tempctl.c`)
 
-One test function per rule group of `TEMPCTL-SPEC-v3.0.0.md`; the change
-list rows (C1-C22) and required scenarios (S1-S15) of the v3.0.0 handoff
-are named in the comments.
+One test function per rule group of `TEMPCTL-SPEC-v4.0.0.md`; the v3
+change list rows (C1-C22) and scenarios (S1-S15) and the v4 handoff's
+section 13 items (13.x.y) are named in the comments. The harness starts
+every v3 test with Init + Start (permissive 1) so the v3 checks keep their
+meaning under the lifecycle; the raw calls are used by the R10 groups.
 
-- **API (C1):** version and counts, every argument error (-1, -2) for every
-  function, outputs untouched on a negative return, longer buffers accepted.
+- **API (C1, 13.1):** version 0x040000, counts 18 / 28, every argument
+  error (-1, -2) for every function including `TcStart` and `TcStop`, the
+  v3 setup length (17) refused, outputs untouched and no state change on a
+  negative return, longer diag buffers accepted and left untouched beyond 28.
 - **R2 enable / lifecycle (C3, S12):** uninitialised zone inert and
   `TC_OK`; `Enable = 0` inert under out-of-range, NaN, below-band and
-  feedback stimuli (no warning, no fault, no accumulation, no averaging);
-  the 0.1 boolean threshold; power-on state.
-- **R3 units (C4):** identical trajectories with units 0 and 1 over a
-  profile that exercises both relays; units 2, 0.5, NaN -> ConfigFault.
-- **R4 filter (C9):** every invalid FilterPoints value becomes 4 without a
-  fault or warning; 64, 2.9, 1, 64.9 handled; control on the raw value with
-  a 64-point average; the moving-average arithmetic; out-of-range and NaN
-  samples never averaged; Init and Reset clear the averages; sensor 2's
-  average uses the corrected value; NaN fields with Temp2 disabled.
-- **R4.4 NaN and chatter (C10, S4):** single NaN, +/-Inf and spikes in idle,
-  pending, heating and cooling change no relay and corrupt no average; NaN,
-  +Inf, -Inf and over-limit streams fail high, under-limit fails low; NaN on
-  a disabled sensor 2 ignored.
-- **R5.4 accumulator (DRAIN 0.5), R5.6 events (C11, S5):** one-tick glitch
-  charges 100 and drains 50 + 50; sparse glitches never fail and each is
-  counted; a sustained excursion is one event and drains at half rate; the
-  Amendment A table with ErrorTimeout 1000: 33 % duty nets zero and never
-  fails, 25 % never fails, 50 % fails on tick 37 (3.7 s, about 4 x), 75 %
-  fails on tick 15 (1.5 s, about 1.6 x), 100 % fails at exactly 1000 ms;
-  an odd 101 ms period keeps the half-ms accumulator exact (101, 50.5, 0);
-  an ErrorTimeout of one loop period fails a sensor from one sample (the
-  documented host floor); the direction at the moment of failure; 60-minute
-  ring expiry with partial and full expiry; Init/Reset clear the counts;
-  sensor 2's own accumulator and counter.
-- **R5.5 failover (C12, S7):** sensor 1 fails with sensor 2 healthy -> no
-  fault, control on corrected sensor 2, warning 1 masking 6, RunningOnTemp2
-  when back in range, accumulator frozen; excursions on the failed sensor;
-  then sensor 2 fails -> BothSensorsFailed, latched, warning frozen; sensor
-  2 failing first (no switch, warning while out of range); both on one tick;
-  single-sensor faults 10/11; never re-admitted; Init and Reset restore
-  sensor 1.
-- **R5.7 pause (C13, S6):** at-setpoint and deadband countdowns freeze
-  through an excursion (limit values and NaN) and resume where they stopped;
-  idle holds; the non-active sensor's excursion does not touch control;
-  pause ending in a fault and in a failover with the relay kept.
-- **R6.1 offset (C5):** limit check, comparison and post-switch control on
-  the corrected value, positive and negative offsets, boundary at HiLimit.
-- **R6.3-R6.6 disagreement (C6, C7, S8):** observed / warning at T/10 /
-  fault at T tick by tick with `CompareRemainMs`; recovery clears at once
-  and restarts from zero; both directions; exactly the tolerance agrees;
-  T/10 = 0; control continues while it runs.
-- **R6.2 / R6.5 gating (S9):** not before Initial_HC_Flag (and first on the
-  tick after it), not during an excursion (restart from zero), not before
-  both averages are full (out-of-range samples do not fill them), not once
-  a sensor failed, not with Temp2 disabled.
-- **R7 control (C8, S1, S3):** the complete heat-up with every countdown
-  value; a single sample at the setpoint never drops the relay; breaking
-  the at-setpoint condition resets it; re-entering the band clears the
-  deadband countdown, crossing to the other side restarts it; inclusive
-  band edges; cool-down and release; overshoot on the release tick starts
-  the opposite countdown; never both relays; deadband countdown idle while
-  a relay is on; setpoint change by Init moves the bands.
-- **R7.5 Initial_HC_Flag (C14):** in-band start (tick 1, band edge),
-  out-of-band start (set on release, not while heating or pending), cooling
-  completion, cleared by Init and Reset, sticky afterwards.
-- **R8 feedback (C15, S10):** honest relays never warn; 1-tick mismatch
-  warns only; sustained mismatch faults that relay; heater and cooler
-  independent, heater first on the same tick; stuck-open heater while
-  heating; a one-tick DO-loop lag warns once per transition; FeedbackEnable
-  = 0 silent; no checking while stopped or disabled; previous command after
-  Reset (0) and after a relay-keeping re-Init (kept); non-zero read-backs.
-- **R9.5 config (C16, S11):** 31 invalid setups each with Enable = 1
-  (ConfigFault, inert, Reset does not clear, passing Init does) and Enable =
-  0 (ConfigInvalid, cleared by the next passing Init); both deadbands zero;
-  one zero deadband allowed; NaN enable; disabled-feature parameters not
-  checked; 1 ms timeouts accepted and still need a later tick; a failing
-  Init while running stops the zone; huge timeouts saturate.
-- **R9.1-R9.3 Init / Reset (C17, C18, S2, S13):** setpoint change by re-Init
-  keeps the heater and restarts the at-setpoint countdown; the new logic
-  may drop it; cooler kept; Enable = 0, a fault, a previously disabled zone
-  and power-up all start with relays off; Init clears everything; Reset
-  keeps the setup and clears history, relays off; fault again after the
-  full timeout; Reset drops a running relay; new time reference.
-- **R9.6 fault behaviour (C19):** warning frozen at the fault tick's value,
-  diagnostics frozen, first fault wins for sensor-vs-feedback,
-  disagreement-vs-feedback and heater-vs-cooler, no later overwrite, mirrors
-  equal the outputs.
-- **R1.4 / R1.5 time (C21, S15):** 2^32 wrap during a countdown, the
-  accumulator and the hourly ring; backwards steps of 50 s and 5 ms count as
-  0 ms; the same call time twice; long gaps; the largest forward step
-  (0x7FFFFFFF) counts, one more is backwards.
-- **S14 two zones:** two zones with different setups stepped alternately
-  produce exactly the traces of running each alone; a Reset on one leaves
-  the other untouched; all 16 zones usable.
-- **C22 diagnostics:** repeated `TcGetDiag` calls change nothing (two
-  identical runs, one with three diag calls per tick, compared field by
-  field); every index checked against a documented value at a known point;
-  the buffer beyond 25 untouched; Init/Reset mirrors before the first
-  CheckTemp.
+  feedback stimuli; the 0.1 boolean threshold; power-on state; Start and
+  Stop on disabled / uninitialised zones.
+- **R3 units (C4), R4 filter (C9), R4.4 NaN and chatter (C10, S4), R5.4
+  accumulator and R5.6 events (C11, S5), R5.5 failover (C12, S7), R5.7 pause
+  (C13, S6), R6 offset / disagreement / gating (C5-C7, S8, S9), R7 control
+  and `Initial_HC_Flag` (C8, C14, S1, S3), R8 feedback (C15, S10), R9.5
+  config (C16, S11), R9.1-R9.2 Init / Reset (C17, S2, S13), R9.6 fault
+  behaviour (C19), R1.4 / R1.5 time (C21, S15), S14 two zones, C22
+  diagnostics:** as in v3 (see the v3 spec's test list), with these v4
+  changes: the R9.3 relay keeping is replaced by "a re-Init drops the relay
+  and leaves the zone `IdleStopped`" (13.2.2); the feedback previous
+  command is 0 after Init, Reset, Stop, Start and a trip (R8.3, 13.4.8); the
+  `OperatingConditionTimeout` joins the 31 invalid-setup cases (0, 0.999,
+  -1, NaN); the diagnostics point check covers the three new fields.
+- **R10.2 / R10.5 Init and Reset (13.2.1, 13.2.2, 13.2.8-13.2.11):** a valid
+  enabled Init is `IdleStopped` with relays off, Started 0, permissive NaN;
+  20 stopped ticks below the band and 20 NaN ticks change nothing (no
+  countdown, no accumulation, no warning, raw mirrored, average NaN); Init
+  while heating drops the relay; direct Init / Reset zero the mirrors; Reset
+  leaves the zone stopped and CheckTemp alone never resumes; `ConfigFault`
+  survives Reset, Start and Stop; the Stop -> Init and Stop -> Reset host
+  sequences; Reset clears the blocked and tripped states and a pending
+  countdown.
+- **R10.3 Start (13.2.3-13.2.5, 13.3, 13.4.15):** refused on uninitialised
+  and disabled zones (with `ConfigInvalid` kept); accepted Start: Started 1,
+  provisional `TempAtSetPt`, relays off until the first qualified decision,
+  fresh 500 ms countdown; Start while started is a no-op even with a false
+  permissive, no countdown restart, no time re-base, the next CheckTemp
+  performs the live safety action; blocked Start: `TC_OK`, status 7,
+  warning 8, no countdown through 50 false ticks and an hour; recovery
+  clears warning 8 live without starting; a later Start clears the block;
+  Stop acknowledges a blocked Start; `IdleStopped` never warns 8; Start
+  preserves the failover, accumulators and hourly counts and clears the
+  averages and the flag; the hourly rings age in wall time across a Stop
+  (at Start and on stopped ticks) while the accumulator does not drain.
+- **R10.4 Stop (13.2.6, 13.2.7, 13.6.8, 13.6.9):** Stop from `TempAtSetPt`,
+  `HeatPending`, `HeaterON`, `CoolPending` and `CoolerON` returns 0/0 and
+  `IdleStopped` with the countdowns cancelled; stopped time excluded by the
+  Start re-base; Stop idempotent; Stop on an uninitialised, disabled (with
+  and without `ConfigInvalid`) and faulted zone; ordinary Stop clears
+  warnings 1, 2, 3, 4, 5 and keeps the history; `RunningOnTemp2` persists;
+  `RunPermissive` unchanged; Stop does not evaluate a permissive.
+- **R10.7 / R10.8 permissive loss (13.4):** first false sample: 0/0,
+  pending, full timeout, Started 0, permissive 0, from `HeaterON`, `CoolerON`,
+  `HeatPending` and `TempAtSetPt`; one-tick loss -> tripped, no fault, no
+  restart, warning 8 live; refused Start from tripped keeps the trip cause;
+  fault on the exact qualified tick (observation + 10) with the countdown
+  pinned per tick; latched through 20 true ticks, Start and Stop with the
+  diagnostics frozen; Reset then Start; recovery one tick before the timeout;
+  no second countdown from tripped; Stop during pending keeps the cause and
+  warning 8 while the last permissive was false; Start with a false
+  permissive while pending preserves the countdown and the time reference
+  (exact remaining values after a 250 ms gap); Start with a true permissive
+  while pending or tripped restarts; sensor / control state frozen while
+  pending and tripped (accumulator, events, average, ControlTemp); feedback
+  never faults on the intentional off transition and catches a still-closed
+  relay after the restart; same-tick priority for sensor, disagreement,
+  heater-feedback and cooler-feedback faults over the permissive; a fault
+  that would mature one tick later is frozen by the trip; 100 `TcGetDiag`
+  calls advance nothing; the trip clears the transient warnings and
+  `RunningOnTemp2` masks 8 through pending and the fault.
+- **R10.7 time (13.5):** the operating-condition countdown across the 2^32
+  wrap, a 50 s backwards step and the same timestamp add nothing, a 600 s
+  gap expires it, stopped time excluded.
+- **Status / warning consistency (13.6):** every code value; the mirrors
+  follow Init, Start, Stop, CheckTemp and Reset but not `TcGetDiag`;
+  `RunPermissive` NaN after Init / Reset, updated by enabled non-faulted
+  Start and CheckTemp (a refused Start included), not by disabled, faulted
+  or idempotent calls, unchanged by Stop, frozen at the value evaluated on a
+  fault tick; a disabled zone never warns 8.
+- **Two zones (13.7):** one zone trips and faults on its permissive while
+  the other keeps heating; Stop, Reset and Start on one leave the other
+  untouched; all 16 zones hold independent lifecycle states.
 
 ### `tests\oracle_test.py` (independent implementations)
 
-Loads `tempctl.dll` and the vendored `cantp.dll` through ctypes and runs a
-scripted scenario (heat-up on a toy plant, at-setpoint release, sensor 1
-open with failover to sensor 2, reset, relay feedback fault, single-sensor
-NaN stream, Temp2 disabled). After every call the 25-value diagnostics
+Loads `tempctl.dll` and the vendored `cantp.dll` through ctypes and defines
+two CanTp slots: one from `dbc\tables\TempCtl.json` (`CanTp_Define`), one
+from the `TempCtl` cluster of `dbc\tempctl.ecd` (`CanTp_DefineFlat`, read
+with CanTp's `ecdflat.py`). Both slots must read back identical rows and
+pack identical bytes. It then runs boundary vectors and a scripted scenario
+(Init, a stopped tick, a blocked Start, Stop, an accepted Start, heat-up on a
+toy plant, at-setpoint release, sensor 1 open with failover to sensor 2, a
+one-tick permissive loss with an explicit restart, a sustained loss to
+`OperatingConditionFault` on the exact tick, Reset, a relay feedback fault,
+Stop on a faulted zone, single-sensor NaN stream, Reset + Start + Stop from
+`HeaterON`, a 100 s operating-condition timeout that reads 100000 in the
+array and 0xFAFF on the wire). After every call the 28-value diagnostics
 array is packed by `CanTp_Pack`, the BAM is reassembled by the script's own
 TP.CM/TP.DT parser, and the payload is compared bit-for-bit with cantools
 encoding the same values with `dbc\tempctl.dbc` (pad bits masked; NaN
-signals checked for the all-ones pattern). cantools' decode of CanTp's
-payload must equal `CanTp_Unpack`, and the diagnostics mirrors must equal
-the call outputs. 1287 arrays.
+signals checked for the all-ones pattern; the eight millisecond signals
+checked for `min(value, 64255)` and 0xFFFF on NaN). cantools' decode of
+CanTp's payload must equal `CanTp_Unpack`, and the diagnostics mirrors must
+equal the call outputs. It refuses a non-v4 binary and a table with other
+than 28 rows with a clear message. 1346 arrays (30 boundary vectors).
 
 ```bat
 pip install cantools
@@ -133,33 +135,57 @@ python tests\oracle_test.py [--tempctl build\win-x64\tempctl.dll] [--cantp third
 
 ### `tools\make_tempctl_dbc.py`
 
-Verifies the DBC signal order against the `TC_DIAG_*` defines in
-`tempctl.h`, loads the written DBC with cantools (strict), checks the frame
-id, length, `VFrameFormat`, order and that no two signals overlap.
-`package_dist.bat` regenerates the DBC and fails if `dbc\tempctl.dbc`
-differs.
+Verifies the DBC signal order and the status / warning value tables against
+the `TC_DIAG_*`, `TC_ST_*` and `TC_WN_*` defines in `tempctl.h`, asserts the
+44-byte payload, loads the written DBC with cantools (strict), checks the
+frame id, length, `VFrameFormat`, order, that no two signals overlap and
+that every millisecond signal is U16 / 1 / 0 / 0..64255; with `--ecd` it
+writes `tempctl.ecd` (an encrypted LabVIEW flatten of one `J1939Msg(V4)`
+cluster, channels in `TC_DIAG_*` order), decrypts it again with CanTp's
+`ecdflat.py` and compares every channel (start bit, length, type, byte
+order, factor, offset, min, max, unit, lookup table) with the DBC and the
+derived CanTp rows with `dbc2tables`' rows. `package_dist.bat` regenerates
+all three and fails if the shipped files differ.
 
 ### Simulator gates (TempSim package)
 
-`TempSim.Cli --scenario all`: the 15 scenarios of the handoff plus
-`flicker-25` (both sides of the one-third duty boundary, Amendment A) with
-110 built-in expectations (status, warning, relays, countdown and
-accumulator values at exact ticks), every tick packed by `CanTp_Pack` and
-read back by `CanTp_Unpack`; exit 1 on any failed expectation or unpack
-mismatch.
-`TempSim.exe --screenshot`: loads the failover scenario, runs 75 s, renders
-the window, exits 0 only with all expectations met. Both run against the
-same `tempctl` binaries this package ships.
+`TempSim.Cli --scenario all`: 29 scenarios with 208 built-in expectations
+(status, warning, relays, physical relay states, Started, permissive,
+countdown and accumulator values at exact ticks), every tick packed by
+`CanTp_Pack` and read back by `CanTp_Unpack`; the shipped `tempctl.ecd`
+cross-checked against `TempCtl.json` at start-up; exit 1 on any failed
+expectation or unpack mismatch, 2 on a stale table / ECD or a non-v4
+library. `TempSim.exe --screenshot`: loads the failover scenario, runs
+75 s, renders the window, exits 0 only with all expectations met. Both run
+against the same `tempctl` binaries this package ships.
 
 ### On Linux
 
 `linux-arm64\test_tempctl` was run on a Raspberry Pi 5 (aarch64):
-`1516 passed, 0 failed` (`docs\testlogs\pi-test_tempctl-2026-09-18.txt`,
-appended to `TESTLOG.txt`). The `linux-arm64` simulator ran all 16 scenarios
-with 110/110 expectations and produced CSV and `.ncl` files byte-identical
-to the Windows run (TempSim package, `testlogs\pi-sim-2026-09-18.txt`).
+`2186 passed, 0 failed` (`docs\testlogs\pi-test_tempctl-2026-09-22.txt`,
+appended to `TESTLOG.txt`). The `linux-arm64` simulator ran all 29 scenarios
+with 208/208 expectations and produced 60 CSV and `.ncl` files byte-identical
+to the Windows run (TempSim package, `testlogs\pi-sim-2026-09-22.txt`).
 
-`linux-x64\test_tempctl` is the same program for the cRIO; run it once on
-the target (`LABVIEW_INTEGRATION.md` section 2). The `.so` files are
-inspected at package time with `tools\elfinfo.py` (`DEPENDENCIES.txt`): the
-cRIO library imports only `memset` from libc.
+`linux-x64\test_tempctl` (Intel cRIO) and `linux-armhf\test_tempctl`
+(myRIO-1900) are the same program. The `.so` files are inspected at package
+time with `tools\elfinfo.py` (`DEPENDENCIES.txt`: ELF class, machine,
+exports, imports, SONAME; the ARM library is EABI v5 hard float and imports
+nothing from libc). Whether each was executed on its target in this release
+is stated in `TESTLOG.txt`: a dated log in `docs\testlogs\`
+(`crio-test_tempctl-<date>.txt`, `myrio-test_tempctl-<date>.txt`) when the
+owner ran it, otherwise "built and inspected, not executed". The 32-bit ARM
+binary cannot run on the aarch64 Pi (no 32-bit loader), so the myRIO is its
+only execution target.
+
+### Owner-executed gates (not automated here)
+
+- LabVIEW: import `tempctl.h` with the x86 DLL in 32-bit LabVIEW 2026 with
+  the parser settings of `TEMPCTL-v4.0.0-API-AND-LABVIEW-GUIDE.md` section 7,
+  correct the two arrays, run the smoke sequence Version -> SetupCount ->
+  DiagCount -> Init -> Start -> CheckTemp -> Stop -> Reset -> GetDiag; record
+  the LabVIEW version, architecture, parser settings, DLL hash and result.
+- LabVIEW RT: the same wrapper VIs against `linux-x64\libtempctl.so` on the
+  cRIO and `linux-armhf\libtempctl.so` on the myRIO-1900, including the
+  lifecycle / permissive sequences; record target model, image version,
+  LabVIEW RT version, ABI, hashes and results.
