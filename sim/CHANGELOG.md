@@ -7,6 +7,46 @@ printed by both programs at start-up and recorded in the package's
 
 ---
 
+## v3.0.0 - 2026-09-22
+
+Simulator for TempCtl **4.0.0** (new lifecycle API: `TcStart` / `TcStop`, the
+live `runPermissive` input of `TcCheckTemp`, 18 setup values, 28 diagnostics,
+statuses 6..9 and 17, warning 8). Embeds tempctl 4.0.0 and cantp 1.3.1.
+**Not compatible with a v3 controller**: the simulator refuses a library
+whose major version is not 4 and a table with other than 28 signals.
+
+- Lifecycle: a run does `TcInit` then `TcStart` (`StartOnInit`, default
+  true, so every earlier scenario still controls from t = 0); `Start`,
+  `Stop` and the live `Run permissive` are operator controls in the WPF
+  toolbar and scenario events in the CLI. A parameter change and the
+  operator reset follow the host sequence the handoff requires: `TcStop`,
+  the returned zero commands applied to the modelled relays, then `TcInit`
+  / `TcReset`, then `TcStart` again only when the operator's intent is
+  "running". `Stop` writes both modelled relay outputs off at once.
+- Wire format: the diagnostics message is 44 bytes (was 55), 8 BAM frames;
+  the eight millisecond diagnostics are U16 and saturate at 64255 on the
+  wire (the unpack check clamps the same way). `tempctl.ecd` ships next to
+  `TempCtl.json`; at start-up the pair is cross-checked channel by channel
+  and a stale or reordered ECD is refused. `--table x.ecd` defines the CanTp
+  slot with `CanTp_DefineFlat` and verifies the derived rows.
+- Scenarios: **29** (was 16) with **208** expectations (was 110): the 15 of
+  the v3.0.0 handoff under the v4 lifecycle (`setpoint-reinit` became
+  `reconfigure-stop-init`, the Stop-Init-Start form of S2, because Init no
+  longer keeps a relay), `flicker-25`, and the 14 lifecycle / permissive
+  scenarios of the v4.0.0 handoff section 14 (`idle-before-start`,
+  `start-heat-cool`, `stop-from-active`, `blocked-start`, `permissive-trip`,
+  `permissive-recover`, `permissive-fault`, `stop-while-pending`,
+  `permissive-fault-priority`, `reset-stays-idle`, `reset-stop-first`,
+  `start-while-pending`, `two-zones-lifecycle`).
+- CSV gains `run_perm`, `oc_rem_ms`, `started` before `rc`; the CLI state
+  line gains `perm ocRem st`; the WPF status panel gains the lifecycle line
+  and the operating-condition countdown meter; the setup panel gains
+  `OperatingConditionTimeout`.
+- Gates: Windows 208/208, screenshot rendered; Raspberry Pi linux-arm64
+  208/208 with every CSV / .ncl byte-identical to Windows
+  (`testlogs\pi-sim-2026-09-22.txt`). The fixture model (2.1.0-2.2.1) is
+  unchanged; its Pi validation remains pending.
+
 ## v2.2.1 - 2026-09-20
 
 - Replace ambiguous blank timer tracks with explicit idle/disabled/fault states,

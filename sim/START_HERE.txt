@@ -1,4 +1,4 @@
-TEMPSIM 2.2.1 - WINDOWS QUICK START
+TEMPSIM 3.0.0 - WINDOWS QUICK START
 For Scott: temperature controller and animated test-fixture simulation
 
 1. Save the ZIP locally and use Extract All to extract the entire archive.
@@ -12,6 +12,17 @@ This package is for 64-bit Windows. It includes the .NET runtime, TempCtl
 controller DLL, CanTp DLL, and diagnostic table. No .NET SDK, LabVIEW, CAN
 adapter, or connected test hardware is required. Keep the whole TempSim
 folder together; do not move only the executable.
+
+WHAT IS NEW IN 3.0.0 (TempCtl v4)
+
+- The controller now has an explicit lifecycle. Start begins control, Stop
+  switches both relay commands off without a fault, and the Run permissive
+  check box is the live operating-condition input: unchecking it while
+  running de-energizes both relays on the next tick and, if it stays
+  unchecked for OperatingConditionTimeout, latches OperatingConditionFault.
+  Init and Reset leave the controller stopped; press Start to run again.
+- The Live status tab shows Started, the permissive and the condition-fault
+  countdown. The CAN data tab shows all 28 diagnostics in the 44-byte message.
 
 WHAT TO TRY
 

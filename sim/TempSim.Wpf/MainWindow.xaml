@@ -12,7 +12,10 @@
    </DockPanel>
    <WrapPanel Margin="0,0,0,12">
     <Button x:Name="RunButton" Content="Pause" Width="72" Click="OnRunPause"/>
-    <Button Content="Reset fault" Click="OnReset"/>
+    <Button Content="Start" Click="OnStart" ToolTip="TcStart with the live run permissive (refused as IdleStartBlocked when it is false)"/>
+    <Button Content="Stop" Click="OnStop" ToolTip="TcStop: both relay commands off at once, no fault"/>
+    <CheckBox x:Name="PermissiveCheck" Content="Run permissive" IsChecked="True" VerticalAlignment="Center" Margin="8,0,8,0" Checked="OnPermissiveChanged" Unchecked="OnPermissiveChanged" ToolTip="The host's combined operating-condition input passed to every TcCheckTemp; unchecking it while running de-energizes both relays on the next tick"/>
+    <Button Content="Reset fault" Click="OnReset" ToolTip="Stop, apply zero DOs, TcReset, Start again when running"/>
     <Button Content="Restart" Click="OnRestart"/>
     <Label Content="Simulation speed" Margin="10,0,0,0"/>
     <ComboBox x:Name="SpeedCombo" Width="75" SelectedIndex="0" SelectionChanged="OnSpeedChanged"><ComboBoxItem Content="1x"/><ComboBoxItem Content="2x"/><ComboBoxItem Content="3x"/><ComboBoxItem Content="5x"/><ComboBoxItem Content="10x"/><ComboBoxItem Content="20x"/></ComboBox>
@@ -37,10 +40,11 @@
     <Border Grid.Row="1" Background="#0E2438" CornerRadius="10" BorderBrush="#234660" BorderThickness="1" Padding="4"><local:FixtureView x:Name="Fixture"/></Border>
    </Grid>
    <TabControl Grid.Column="1" x:Name="DashboardTabs">
-    <TabItem Header="Live status"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">                <GroupBox Header="Controller status (TcCheckTemp outputs + TcGetDiag)">
+    <TabItem Header="Live status"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">                <GroupBox Header="Controller status (TcCheckTemp outputs + TcGetDiag, 28 values)">
                     <StackPanel>
                         <TextBlock x:Name="StatusText" FontSize="20" FontWeight="Bold" Margin="2"/>
                         <TextBlock x:Name="WarningText" FontSize="13" Margin="2" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="LifecycleText" FontSize="12" Margin="2" TextWrapping="Wrap" Foreground="#9FD8FF"/>
                         <TextBlock x:Name="ControlTempText" FontSize="12" Margin="2" TextWrapping="Wrap"/>
                         <StackPanel>
                             <local:DiagnosticMeter x:Name="DbMeter" Caption="Relay start delay"/>
@@ -48,6 +52,7 @@
                             <local:DiagnosticMeter x:Name="CmpMeter" Caption="Sensor disagreement fault delay"/>
                             <local:DiagnosticMeter x:Name="HfbMeter" Caption="Heater feedback fault delay"/>
                             <local:DiagnosticMeter x:Name="CfbMeter" Caption="Cooler feedback fault delay"/>
+                            <local:DiagnosticMeter x:Name="OcMeter" Caption="Operating-condition fault delay (permissive lost)"/>
                             <local:DiagnosticMeter x:Name="Acc1Meter" Caption="Sensor 1 invalid-reading accumulation"/>
                             <local:DiagnosticMeter x:Name="Acc2Meter" Caption="Sensor 2 invalid-reading accumulation"/>
                         </StackPanel>
@@ -61,7 +66,7 @@
                     </StackPanel>
                 </GroupBox>     </StackPanel></ScrollViewer></TabItem>
     <TabItem Header="Configuration"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8"><GroupBox Header="Fixture physics · estimated starting values"><StackPanel><TextBlock Text="Edit the thermal model, motors, pump and fan in a dedicated configuration screen." TextWrapping="Wrap" Margin="4"/><Button Content="Configure fixture physics…" Click="OnConfigureFixture" Margin="4"/><Button Content="Run fixture model" Click="OnFixtureMode" Margin="4"/></StackPanel></GroupBox>
-                <GroupBox Header="Controller setup (TcInit on every change)">
+                <GroupBox Header="Controller setup (Stop, TcInit, Start on every change)">
                     <StackPanel x:Name="ControllerPanel"/>
                 </GroupBox>
                 <GroupBox Header="Ambient / legacy plant rates">

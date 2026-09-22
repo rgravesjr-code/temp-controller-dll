@@ -24,11 +24,24 @@ public static unsafe class CanTpNative
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_RxReset(int slot);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_RecordSize(byte* rec, int avail);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_NclHeader(byte* output, int outLen);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_DefineFlat(int slot, byte* flat, int flatLen, int transport, int sa);
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] public static extern int CanTp_GetDef(int slot, double* msgDef, int msgDefLen, double* sigDefs, int nSigMax);
 
     public static int Define(int slot, ReadOnlySpan<double> msgDef, ReadOnlySpan<double> sigDefs, int nSig)
     {
         fixed (double* pm = msgDef) fixed (double* ps = sigDefs)
             return CanTp_Define(slot, pm, msgDef.Length, ps, nSig);
+    }
+    /// <summary>CanTp_DefineFlat: define a slot from the flattened J1939Msg(V4) cluster of an .ecd database (CanTp 1.2.0+).</summary>
+    public static int DefineFlat(int slot, ReadOnlySpan<byte> flat, int transport = -1, int sa = -1)
+    {
+        fixed (byte* p = flat) return CanTp_DefineFlat(slot, p, flat.Length, transport, sa);
+    }
+    /// <summary>CanTp_GetDef: read a slot back as msgdef (8) + sigdef rows (8 each); returns the signal count.</summary>
+    public static int GetDef(int slot, Span<double> msgDef, Span<double> sigDefs)
+    {
+        fixed (double* pm = msgDef) fixed (double* ps = sigDefs)
+            return CanTp_GetDef(slot, pm, msgDef.Length, ps, sigDefs.Length / SigDefCols);
     }
     /// <summary>CanTp_Pack: the diagnostics array (doubles) -> raw frame records.</summary>
     public static int Pack(int slot, ReadOnlySpan<double> values, ulong ts, ulong spacing, Span<byte> output, out int written)

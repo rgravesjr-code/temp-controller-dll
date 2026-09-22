@@ -5,10 +5,10 @@ using TempSim.Core.Native;
 namespace TempSim.Cli;
 
 /// <summary>
-/// TempSim.Cli - cross-platform console simulator for TempCtl v3 + CanTp.
+/// TempSim.Cli - cross-platform console simulator for TempCtl v4 + CanTp.
 ///
 ///   TempSim.Cli [--scenario NAME|all] [--out DIR] [--config FILE] [--seconds N] [--period-ms N] [--every S]
-///               [--can IFACE] [--realtime] [--quiet] [--native-dir DIR] [--table FILE]
+///               [--can IFACE] [--realtime] [--quiet] [--native-dir DIR] [--table FILE.json|FILE.ecd]
 ///   TempSim.Cli --list
 ///   TempSim.Cli --rx IFACE [--seconds N]     (Linux: listen on a CAN interface and decode TempCtl BAMs with CanTp_RxFeed)
 ///
@@ -67,6 +67,17 @@ static class Program
             return 0;
         }
         var msgTable = MessageTable.Load(table ?? MessageTable.DefaultPath);
+        if (msgTable.SignalCount != TcConst.DiagCount)
+        {
+            Console.Error.WriteLine($"{msgTable.Source} has {msgTable.SignalCount} signals; TempCtl v{TcConst.Major} has {TcConst.DiagCount} diagnostics (a v3 table has 25). Regenerate with tools/make_tempctl_dbc.py --tables --ecd.");
+            return 2;
+        }
+        Console.WriteLine($"  message table {msgTable.Source}: {msgTable.SignalCount} signals, {msgTable.Length}-byte {msgTable.Transport}" + (msgTable.Flat != null ? " (CanTp_DefineFlat)" : ""));
+        if (table == null || !table.EndsWith(".ecd", StringComparison.OrdinalIgnoreCase))
+        {
+            try { Console.WriteLine("  " + MessageTable.CheckShippedEcd(msgTable)); }
+            catch (Exception ex) { Console.Error.WriteLine("ERROR: " + ex.Message); return 2; }
+        }
         if (rxIface != null) return Receive(rxIface, msgTable, baseConfig.Seconds);
 
         if (string.Equals(scenario, "fixture", StringComparison.OrdinalIgnoreCase))
@@ -129,9 +140,9 @@ static class Program
         static string R(double v) => v.ToString("0", CultureInfo.InvariantCulture).PadLeft(5);
         var k = s.Ctl;
         if (s_rows++ % 25 == 0)
-            Console.WriteLine("       t   plant  temp1  temp2   ctrl  dH dC  hf cf  status              warning            act  dbRem aspRem cmpRem hfbRem cfbRem  acc1  acc2 ev1 ev2 hc");
+            Console.WriteLine("       t   plant  temp1  temp2   ctrl  dH dC  hf cf  status                             warning                      act  dbRem aspRem cmpRem hfbRem cfbRem  acc1  acc2 ev1 ev2 hc  perm ocRem st");
         Console.WriteLine($"  {s.TimeSeconds,6:0.0} {F(s.Plant.Temperature)}  {F(s.Temp1Raw)}  {F(s.Temp2Raw)}  {F(k.ControlTemp)}   {(k.DoHeater ? 1 : 0)}  {(k.DoCooler ? 1 : 0)}   {(s.HeaterOn ? 1 : 0)}  {(s.CoolerOn ? 1 : 0)}  " +
-                          $"{Controller.Describe(k.Status),-19} {Controller.Describe(k.Warning),-18} {k.ActiveSensor}  {R(k.DeadbandRemainMs)} {R(k.AtSetPtRemainMs)} {R(k.CompareRemainMs)} {R(k.HeaterFbRemainMs)} {R(k.CoolerFbRemainMs)} {R(k.Temp1OorAccumMs)} {R(k.Temp2OorAccumMs)} {k.Temp1OorEventsPerHour,3} {k.Temp2OorEventsPerHour,3}  {(k.InitialHcFlag ? 1 : 0)}");
+                          $"{Controller.Describe(k.Status),-34} {Controller.Describe(k.Warning),-28} {k.ActiveSensor}  {R(k.DeadbandRemainMs)} {R(k.AtSetPtRemainMs)} {R(k.CompareRemainMs)} {R(k.HeaterFbRemainMs)} {R(k.CoolerFbRemainMs)} {R(k.Temp1OorAccumMs)} {R(k.Temp2OorAccumMs)} {k.Temp1OorEventsPerHour,3} {k.Temp2OorEventsPerHour,3}  {(k.InitialHcFlag ? 1 : 0)}  {(double.IsNaN(k.RunPermissive) ? " NaN" : (s.RunPermissive ? 1 : 0).ToString().PadLeft(4))} {R(k.OperatingConditionRemainMs)} {(k.Started ? 1 : 0),2}");
     }
 
     /// <summary>Linux receive side: reassemble TempCtl BAMs from a live bus with CanTp_RxFeed and print the decoded values.</summary>
@@ -160,11 +171,11 @@ static class Program
     static void PrintHelp()
     {
         Console.WriteLine("""
-            TempSim.Cli - TempCtl v3 + CanTp closed-loop simulator (console)
+            TempSim.Cli - TempCtl v4 + CanTp closed-loop simulator (console)
 
               TempSim.Cli [--scenario NAME|all] [--out DIR] [--config FILE] [--seconds N] [--period-ms N] [--every S]
-                          [--can IFACE] [--realtime] [--quiet] [--native-dir DIR] [--table FILE]
-              TempSim.Cli --list                        built-in scenarios (the 15 required by the v3.0.0 handoff)
+                          [--can IFACE] [--realtime] [--quiet] [--native-dir DIR] [--table FILE.json|FILE.ecd]
+              TempSim.Cli --list                        built-in scenarios (the v3.0.0 handoff's 15 under the v4 lifecycle + the 14 of the v4.0.0 handoff)
               TempSim.Cli --rx IFACE [--seconds N]      Linux: decode TempCtl BAMs from a CAN interface (CanTp_RxFeed)
 
             Outputs per scenario: DIR/NAME.csv (state per tick) and DIR/NAME.ncl (NI-XNET logfile of the BAM frames);
@@ -176,6 +187,11 @@ static class Program
             --can IFACE     Linux only: also transmit every frame on a SocketCAN interface (e.g. can1)
             --realtime      pace the run at the simulation period instead of running flat out
             --native-dir    folder holding tempctl/cantp libraries (default: next to the executable)
+            --table FILE    the CanTp definition of the diagnostics message: TempCtl.json (dbc2tables) or tempctl.ecd
+                            (CanTp_DefineFlat); the shipped pair next to the executable is cross-checked at start-up
+            Lifecycle: a run issues TcInit then TcStart (StartOnInit, default true; a scenario may leave the zone
+            IdleStopped); RunPermissive is the live input of every TcCheckTemp; scenario events call Start / Stop /
+            Reset and flip the permissive. CSV columns run_perm, oc_rem_ms, started carry the new diagnostics.
             """);
     }
 }

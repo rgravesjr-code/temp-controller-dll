@@ -11,7 +11,8 @@ if "%MODE%"=="" set "MODE=all"
 set "SIM=%ROOT%sim"
 set "OUT=%ROOT%build\sim"
 where dotnet >nul 2>&1 || ( echo ERROR: dotnet SDK not found ^(.NET 10 SDK required^). & exit /b 1 )
-if not exist "%ROOT%dbc\tables\TempCtl.json" ( echo ERROR: dbc\tables\TempCtl.json missing - run: python tools\make_tempctl_dbc.py --tables & exit /b 1 )
+if not exist "%ROOT%dbc\tables\TempCtl.json" ( echo ERROR: dbc\tables\TempCtl.json missing - run: python tools\make_tempctl_dbc.py --tables --ecd & exit /b 1 )
+if not exist "%ROOT%dbc\tempctl.ecd" ( echo ERROR: dbc\tempctl.ecd missing - run: python tools\make_tempctl_dbc.py --tables --ecd & exit /b 1 )
 
 if /i "%MODE%"=="linux" goto :linux
 echo === TempSim (WPF) + TempSim.Cli win-x64 ===

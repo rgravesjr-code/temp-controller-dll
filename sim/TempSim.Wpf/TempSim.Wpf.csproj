@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\dbc\tables\TempCtl.json" Link="TempCtl.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dbc\tempctl.ecd" Link="tempctl.ecd" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <Import Project="..\NativeAssets.targets" />
 </Project>

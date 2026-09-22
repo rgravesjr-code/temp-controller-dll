@@ -9,6 +9,12 @@ namespace TempSim.Core;
 /// diagnostics array (TcGetDiag) packed by CanTp into NI-XNET raw frame records (one J1939 BAM per tick), unpacked
 /// again as the receive-side proof, and optionally written to a real Linux CAN interface. Deterministic for a given
 /// config + scenario.
+///
+/// Lifecycle (TempCtl v4): <see cref="Init"/> configures the zone (TcInit leaves it IdleStopped) and issues TcStart
+/// when <see cref="SimConfig.StartOnInit"/> is set; <see cref="Start"/> / <see cref="Stop"/> are the operator's
+/// commands; <see cref="RunPermissive"/> is the live input passed on every tick. A parameter change (<see cref="ReInit"/>)
+/// and an operator <see cref="Reset"/> follow the required host sequence: TcStop, apply the returned zero commands to
+/// the modelled relays, then TcInit / TcReset, then TcStart again only when the operator's intent is "running".
 /// </summary>
 public sealed class Simulation : IDisposable
 {
@@ -40,6 +46,10 @@ public sealed class Simulation : IDisposable
     public double Temp2Raw { get; private set; }
     public bool HeaterOn { get; private set; }
     public bool CoolerOn { get; private set; }
+    /// <summary>The live run permissive the host supplies (TcStart / TcCheckTemp argument).</summary>
+    public bool RunPermissive { get; set; }
+    /// <summary>The operator's intent: true after Start (or a StartOnInit run), false after Stop. Decides whether ReInit / Reset re-Start.</summary>
+    public bool WantRunning { get; private set; }
 
     /// <summary>The raw frame records of the last tick (CanTp_Pack output).</summary>
     public byte[] Frames { get; }
@@ -63,7 +73,8 @@ public sealed class Simulation : IDisposable
         if (config.PeriodMs < 1 || config.PeriodMs > 10000) throw new ArgumentException("PeriodMs must be 1..10000.");
         if (config.Fixture.Enabled) config.Fixture.Validate();
         Table = table ?? MessageTable.Load(MessageTable.DefaultPath);
-        if (Table.SignalCount != TcConst.DiagCount) throw new InvalidOperationException($"TempCtl.json does not match the controller's {TcConst.DiagCount} diagnostics");
+        if (Table.SignalCount != TcConst.DiagCount)
+            throw new InvalidOperationException($"{Table.Source} has {Table.SignalCount} signals, the controller has {TcConst.DiagCount} diagnostics: stale table (a TempCtl v3 table has 25 rows). Regenerate with tools\\make_tempctl_dbc.py --tables --ecd.");
         Table.Define(zone, Config.Can.SourceAddress);                       // CanTp slot = zone
         FrameCount = CanTpNative.CanTp_FrameCount(zone);
         Frames = new byte[CanTpNative.CanTp_OutputSize(zone)];
@@ -76,6 +87,7 @@ public sealed class Simulation : IDisposable
         Heater = new RelayModel { DelayTicks = config.Heater.DelayTicks, StuckOpen = config.Heater.StuckOpen, StuckClosed = config.Heater.StuckClosed };
         Cooler = new RelayModel { DelayTicks = config.Cooler.DelayTicks, StuckOpen = config.Cooler.StuckOpen, StuckClosed = config.Cooler.StuckClosed };
         Rng = new Rng(config.Seed);
+        RunPermissive = config.RunPermissive;
         Config.Profile.Sort((a, b) => a.AtSeconds.CompareTo(b.AtSeconds));
         if (!string.IsNullOrEmpty(config.Can.Interface) && zone == 0) _bus = SocketCan.Open(config.Can.Interface);
         Init();
@@ -85,7 +97,10 @@ public sealed class Simulation : IDisposable
     /// <summary>Called after every tick with the fresh state (loggers, UI).</summary>
     public void AddObserver(Action<Simulation> observer) => _observers.Add(observer);
 
-    /// <summary>Fresh run: plant and relays reset, the zone Reset (so no relay state survives from an earlier run) and TcInit.</summary>
+    /// <summary>
+    /// Fresh run: plant and relays reset, the zone Reset (so nothing survives from an earlier run), TcInit (IdleStopped),
+    /// then TcStart with the current permissive when <see cref="SimConfig.StartOnInit"/> is set.
+    /// </summary>
     public void Init()
     {
         Tick = 0; Ticks = 0; UnpackMismatches = 0; ClockOffsetMs = 0;
@@ -98,25 +113,63 @@ public sealed class Simulation : IDisposable
         Ctl.Reset(NowMs);
         Ctl.LoadSetup(Config.Controller);
         Ctl.Init(NowMs);
+        WantRunning = Config.StartOnInit;
+        if (WantRunning) Ctl.Start(NowMs, RunPermissive);
         PackAndVerify();
     }
 
-    /// <summary>A parameter change = TcInit with the full setup (a running zone keeps its relays, R9.3).</summary>
-    public void ReInit(Action<SimConfig.ControllerConfig>? edit = null)
+    /// <summary>Operator Start: TcStart with the live permissive (accepted, or refused as IdleStartBlocked); the intent becomes "running".</summary>
+    public void Start()
+    {
+        WantRunning = true;
+        Ctl.Start(NowMs, RunPermissive);
+        PackAndVerify();
+    }
+
+    /// <summary>Operator Stop: TcStop, the returned zero commands applied to the modelled relays at once; the intent becomes "stopped".</summary>
+    public void Stop()
+    {
+        WantRunning = false;
+        StopAndApplyZeros();
+        PackAndVerify();
+    }
+
+    void StopAndApplyZeros()
+    {
+        Ctl.Stop(NowMs);
+        HeaterOn = Heater.Apply(false);
+        CoolerOn = Cooler.Apply(false);
+    }
+
+    /// <summary>
+    /// A parameter change = the host sequence TcStop -> apply zero DOs -> TcInit with the full setup (the zone is left
+    /// IdleStopped, R10.2) -> TcStart when <paramref name="restart"/> and the operator's intent is "running".
+    /// restart = false leaves the zone stopped and clears that intent (an explicit Start is then required).
+    /// </summary>
+    public void ReInit(Action<SimConfig.ControllerConfig>? edit = null, bool restart = true)
     {
         edit?.Invoke(Config.Controller);
+        StopAndApplyZeros();
         Ctl.LoadSetup(Config.Controller);
         Ctl.Init(NowMs);
+        if (!restart) WantRunning = false;
+        if (WantRunning) Ctl.Start(NowMs, RunPermissive);
         PackAndVerify();
     }
 
-    /// <summary>The WPF app's settings panel: adopt the edited setup and re-Init.</summary>
+    /// <summary>The WPF app's settings panel: adopt the edited setup and re-Init (Stop -> Init -> Start when running).</summary>
     public void ApplyControllerConfig(SimConfig.ControllerConfig c) { Config.Controller = c; ReInit(); }
 
-    /// <summary>Operator reset (TcReset): clears faults and history, keeps the setup and the plant.</summary>
-    public void Reset()
+    /// <summary>
+    /// Operator reset = TcStop -> apply zero DOs -> TcReset (faults and history cleared, setup and plant kept, zone
+    /// IdleStopped) -> TcStart when <paramref name="restart"/> and the intent is "running". restart = false leaves it stopped.
+    /// </summary>
+    public void Reset(bool restart = true)
     {
+        StopAndApplyZeros();
         Ctl.Reset(NowMs);
+        if (!restart) WantRunning = false;
+        if (WantRunning) Ctl.Start(NowMs, RunPermissive);
         PackAndVerify();
     }
 
@@ -148,8 +201,8 @@ public sealed class Simulation : IDisposable
         if (Config.Fixture.Enabled) Fixture.Step(dt, Plant, Config.Fixture, HeaterOn, CoolerOn, Config.Controller.TempUnits);
         else Plant.Step(dt, HeaterOn, CoolerOn);
         ReadSensors(dt);
-        // the DO read-back reflects the physical state reached after the last command
-        Ctl.CheckTemp(NowMs, Temp1Raw, Temp2Raw, Heater.Contact, Cooler.Contact);
+        // the DO read-back reflects the physical state reached after the last command; the permissive is the live input
+        Ctl.CheckTemp(NowMs, Temp1Raw, Temp2Raw, Heater.Contact, Cooler.Contact, RunPermissive);
         HeaterOn = Heater.Apply(Ctl.DoHeater);
         CoolerOn = Cooler.Apply(Ctl.DoCooler);
         PackAndVerify();
@@ -174,7 +227,7 @@ public sealed class Simulation : IDisposable
             if (double.IsNaN(v)) continue;                                  // packed as "not available"
             double res = Table.Factor(i);
             double lo = Table.SigDefs[i][6], hi = Table.SigDefs[i][7];
-            double expect = hi > lo ? Math.Clamp(v, lo, hi) : v;
+            double expect = hi > lo ? Math.Clamp(v, lo, hi) : v;           // the U16 ms signals saturate at 64255 on the wire
             if (Math.Abs(Unpacked[i] - expect) > res * 0.5 + 1e-6) UnpackMismatches++;
         }
         _bus?.Send(Frames);
@@ -185,7 +238,8 @@ public sealed class Simulation : IDisposable
     // ---- text views -------------------------------------------------------------------------------------
     public static string CsvHeader =>
         "t_s,plant,temp1,temp2,ctrl,t1avg,t2avg,do_heat,do_cool,heater,cooler,status,warning,active," +
-        "db_rem_ms,asp_rem_ms,cmp_rem_ms,hfb_rem_ms,cfb_rem_ms,t1_accum_ms,t2_accum_ms,t1_events,t2_events,hc_flag,hi_band,lo_band,rc,payload";
+        "db_rem_ms,asp_rem_ms,cmp_rem_ms,hfb_rem_ms,cfb_rem_ms,t1_accum_ms,t2_accum_ms,t1_events,t2_events,hc_flag,hi_band,lo_band," +
+        "run_perm,oc_rem_ms,started,rc,payload";
 
     /// <summary>One CSV row; numbers are rounded to 4 decimals so Windows and Linux runs compare byte for byte.</summary>
     public string CsvRow()
@@ -204,7 +258,9 @@ public sealed class Simulation : IDisposable
           .Append(F(k.HeaterFbRemainMs)).Append(',').Append(F(k.CoolerFbRemainMs)).Append(',')
           .Append(F(k.Temp1OorAccumMs)).Append(',').Append(F(k.Temp2OorAccumMs)).Append(',')
           .Append(k.Temp1OorEventsPerHour).Append(',').Append(k.Temp2OorEventsPerHour).Append(',').Append(k.InitialHcFlag ? 1 : 0).Append(',')
-          .Append(F(k.HiBand)).Append(',').Append(F(k.LoBand)).Append(',').Append(k.LastRc.ToString(c)).Append(',')
+          .Append(F(k.HiBand)).Append(',').Append(F(k.LoBand)).Append(',')
+          .Append(F(k.RunPermissive)).Append(',').Append(F(k.OperatingConditionRemainMs)).Append(',').Append(k.Started ? 1 : 0).Append(',')
+          .Append(k.LastRc.ToString(c)).Append(',')
           .Append(PayloadHex());
         return sb.ToString();
     }

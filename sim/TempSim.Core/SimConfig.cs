@@ -11,6 +11,13 @@ public sealed class SimConfig
     public ulong Seed { get; set; } = 1;
     /// <summary>Value of the millisecond tick at t = 0 (LabVIEW Tick Count is free-running; set near 2^32 to test the wrap).</summary>
     public uint StartTickMs { get; set; } = 0;
+    /// <summary>
+    /// Issue TcStart right after the TcInit of a fresh run, so control runs from t = 0 (what a host does at power-up).
+    /// false: the zone stays IdleStopped until a Start event / button (TempCtl v4 R10.2).
+    /// </summary>
+    public bool StartOnInit { get; set; } = true;
+    /// <summary>Initial value of the live run permissive passed to TcStart / TcCheckTemp (scenario events change it at run time).</summary>
+    public bool RunPermissive { get; set; } = true;
 
     public PlantConfig Plant { get; set; } = new();
     public FixtureConfig Fixture { get; set; } = new();
@@ -56,7 +63,7 @@ public sealed class SimConfig
         public bool StuckOpen { get; set; }
         public bool StuckClosed { get; set; }
     }
-    /// <summary>The 17 TcInit setup values (TC_SETUP_* order in ToSetupArray).</summary>
+    /// <summary>The 18 TcInit setup values (TC_SETUP_* order in ToSetupArray).</summary>
     public sealed class ControllerConfig
     {
         public bool TempCtrlEnable { get; set; } = true;
@@ -76,12 +83,14 @@ public sealed class SimConfig
         public double FilterPoints { get; set; } = 4;
         public bool FeedbackEnable { get; set; } = true;
         public double RelayFeedbackTimeoutMs { get; set; } = 1000;
+        /// <summary>ms a run permissive lost during control may stay false before OperatingConditionFault (v4, index 17).</summary>
+        public double OperatingConditionTimeoutMs { get; set; } = 3000;
 
         public double[] ToSetupArray() => new[]
         {
             TempCtrlEnable ? 1.0 : 0.0, TempUnits, Setpoint, DeadbandHi, DeadbandLo, HiLimit, LoLimit,
             ErrorTimeoutMs, DeadbandTimeoutMs, AtSetPtTimeoutMs, Temp2Enable ? 1.0 : 0.0, Temp2Offset, Temp2Tolerance,
-            TempCompareTimeoutMs, FilterPoints, FeedbackEnable ? 1.0 : 0.0, RelayFeedbackTimeoutMs,
+            TempCompareTimeoutMs, FilterPoints, FeedbackEnable ? 1.0 : 0.0, RelayFeedbackTimeoutMs, OperatingConditionTimeoutMs,
         };
     }
     public sealed class CanConfig

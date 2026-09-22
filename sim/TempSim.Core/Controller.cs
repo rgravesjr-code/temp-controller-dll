@@ -3,9 +3,10 @@ using TempSim.Core.Native;
 namespace TempSim.Core;
 
 /// <summary>
-/// Typed wrapper around one TempCtl v3 zone: fill <see cref="Setup"/> (or <see cref="LoadSetup"/>), call
-/// <see cref="Init"/> / <see cref="CheckTemp"/> / <see cref="Reset"/>, read the outputs and <see cref="Diag"/>
-/// (refreshed with TcGetDiag after every call). The arrays are exactly what the library sees.
+/// Typed wrapper around one TempCtl v4 zone: fill <see cref="Setup"/> (or <see cref="LoadSetup"/>), call
+/// <see cref="Init"/> / <see cref="Start"/> / <see cref="CheckTemp"/> / <see cref="Stop"/> / <see cref="Reset"/>,
+/// read the outputs and <see cref="Diag"/> (refreshed with TcGetDiag after every call). The arrays are exactly
+/// what the library sees.
 /// </summary>
 public sealed class Controller
 {
@@ -23,10 +24,11 @@ public sealed class Controller
     {
         NativeLoader.Register();
         Zone = zone;
+        int ver = TempCtlNative.TcVersion();
+        if (ver >> 16 != TcConst.Major)
+            throw new InvalidOperationException($"tempctl {NativeLoader.Describe()} is not a v{TcConst.Major} library (TcStart / TcStop, {TcConst.SetupCount} setup values, {TcConst.DiagCount} diagnostics); this simulator drives TempCtl v{TcConst.Major} only");
         if (TempCtlNative.TcSetupCount() != TcConst.SetupCount || TempCtlNative.TcDiagCount() != TcConst.DiagCount)
-            throw new InvalidOperationException("tempctl library array sizes do not match this simulator");
-        if (TempCtlNative.TcVersion() >> 16 != 3)
-            throw new InvalidOperationException($"tempctl {NativeLoader.Describe()} is not a v3 library");
+            throw new InvalidOperationException($"tempctl reports {TempCtlNative.TcSetupCount()} setup / {TempCtlNative.TcDiagCount()} diagnostics values, this simulator expects {TcConst.SetupCount} / {TcConst.DiagCount}");
     }
 
     public double this[TcDiag d] => Diag[(int)d];
@@ -34,7 +36,7 @@ public sealed class Controller
     public double GetSetup(TcSetup s) => Setup[(int)s];
     public void LoadSetup(SimConfig.ControllerConfig c) => c.ToSetupArray().CopyTo(Setup, 0);
 
-    /// <summary>TcInit: load / replace the setup (a running zone keeps its relays when the new setup is valid and enabled).</summary>
+    /// <summary>TcInit: load / replace the setup. Leaves the zone IdleStopped: control runs only after <see cref="Start"/> (R10.2).</summary>
     public int Init(uint nowMs)
     {
         LastRc = TempCtlNative.Init(Zone, nowMs, Setup, out int st, out int wn);
@@ -45,10 +47,30 @@ public sealed class Controller
         return LastRc;
     }
 
-    /// <summary>TcCheckTemp: one control tick.</summary>
-    public int CheckTemp(uint nowMs, double temp1, double temp2, bool heaterFb, bool coolerFb)
+    /// <summary>TcStart: accepted when enabled, not faulted and runPermissive is true; refused (IdleStartBlocked) otherwise (R10.3).</summary>
+    public int Start(uint nowMs, bool runPermissive)
     {
-        LastRc = TempCtlNative.CheckTemp(Zone, nowMs, temp1, temp2, heaterFb ? 1 : 0, coolerFb ? 1 : 0,
+        LastRc = TempCtlNative.Start(Zone, nowMs, runPermissive ? 1 : 0, out int st, out int wn);
+        Check(LastRc, "TcStart");
+        Status = (TcStatus)st; Warning = (TcWarning)wn;
+        RefreshDiag();
+        return LastRc;
+    }
+
+    /// <summary>TcStop: both relay commands 0 at once, no fault; the host applies the returned zeros (R10.4).</summary>
+    public int Stop(uint nowMs)
+    {
+        LastRc = TempCtlNative.Stop(Zone, nowMs, out int dh, out int dc, out int st, out int wn);
+        Check(LastRc, "TcStop");
+        DoHeater = dh != 0; DoCooler = dc != 0; Status = (TcStatus)st; Warning = (TcWarning)wn;
+        RefreshDiag();
+        return LastRc;
+    }
+
+    /// <summary>TcCheckTemp: one control tick with the live run permissive.</summary>
+    public int CheckTemp(uint nowMs, double temp1, double temp2, bool heaterFb, bool coolerFb, bool runPermissive)
+    {
+        LastRc = TempCtlNative.CheckTemp(Zone, nowMs, temp1, temp2, heaterFb ? 1 : 0, coolerFb ? 1 : 0, runPermissive ? 1 : 0,
                                          out int dh, out int dc, out int st, out int wn);
         Check(LastRc, "TcCheckTemp");
         DoHeater = dh != 0; DoCooler = dc != 0; Status = (TcStatus)st; Warning = (TcWarning)wn;
@@ -56,7 +78,7 @@ public sealed class Controller
         return LastRc;
     }
 
-    /// <summary>TcReset: clear faults and history, keep the setup, relays off.</summary>
+    /// <summary>TcReset: clear faults and history, keep the setup, relays off; leaves the zone IdleStopped (R10.5).</summary>
     public int Reset(uint nowMs)
     {
         LastRc = TempCtlNative.Reset(Zone, nowMs, out int st, out int wn);
@@ -79,6 +101,7 @@ public sealed class Controller
 
     // ---- typed diagnostics ----
     public bool IsFault => TcConst.IsFault(Status);
+    public bool IsActive => TcConst.IsActive(Status);
     public double ControlTemp => Diag[(int)TcDiag.ControlTemp];
     public int ActiveSensor => (int)Diag[(int)TcDiag.ActiveSensor];
     public double Temp1Raw => Diag[(int)TcDiag.Temp1Raw];
@@ -100,6 +123,11 @@ public sealed class Controller
     public int Temp2OorEventsPerHour => (int)Diag[(int)TcDiag.Temp2OorEventsPerHour];
     public int AppliedFilterPoints => (int)Diag[(int)TcDiag.AppliedFilterPoints];
     public bool ZoneInitialized => Diag[(int)TcDiag.ZoneInitialized] > 0.5;
+    /// <summary>Last permissive evaluated by an enabled, non-faulted Start or CheckTemp: 0, 1, or NaN after Init / Reset.</summary>
+    public double RunPermissive => Diag[(int)TcDiag.RunPermissive];
+    public double OperatingConditionRemainMs => Diag[(int)TcDiag.OperatingConditionRemainMs];
+    /// <summary>1 while a Start is accepted and control may run.</summary>
+    public bool Started => Diag[(int)TcDiag.ControllerStarted] > 0.5;
 
     public static string Describe(TcStatus s) => $"{TcConst.Name(s)} ({(int)s})";
     public static string Describe(TcWarning w) => $"{TcConst.Name(w)} ({(int)w})";

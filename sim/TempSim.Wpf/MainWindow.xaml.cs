@@ -80,6 +80,7 @@ public partial class MainWindow : Window
     void Restart()
     {
         _sim?.Dispose();
+        _cfg.RunPermissive = PermissiveCheck.IsChecked == true;
         _sim = new Simulation(_cfg.Clone(), _table);
         _events.Clear(); _checks.Clear(); _checksOk = _checksFailed = 0;
         EventText.Text = "";
@@ -141,6 +142,15 @@ public partial class MainWindow : Window
 
     void OnRunPause(object sender, RoutedEventArgs e) { _running = !_running; _lastWallSeconds = _wallClock.Elapsed.TotalSeconds; RunButton.Content = _running ? "Pause" : "Run"; }
     void OnReset(object sender, RoutedEventArgs e) { _sim.Reset(); UpdateUi(); }
+    void OnStart(object sender, RoutedEventArgs e) { _sim.Start(); UpdateUi(); }
+    void OnStop(object sender, RoutedEventArgs e) { _sim.Stop(); UpdateUi(); }
+    void OnPermissiveChanged(object sender, RoutedEventArgs e)
+    {
+        if (_sim == null) return;                                         // fires during InitializeComponent
+        _sim.RunPermissive = PermissiveCheck.IsChecked == true;
+        _cfg.RunPermissive = _sim.RunPermissive;
+        UpdateUi();
+    }
     void OnRestart(object sender, RoutedEventArgs e) { Restart(); }
     void OnSpeedChanged(object sender, SelectionChangedEventArgs e) { _speed = SpeedCombo.SelectedIndex switch { 0 => 1, 1 => 2, 2 => 3, 3 => 5, 4 => 10, _ => 20 }; _lastWallSeconds = _wallClock.Elapsed.TotalSeconds; }
 
@@ -228,11 +238,17 @@ public partial class MainWindow : Window
             TcStatus.HeaterON => s_heat,
             TcStatus.CoolerON => s_cool,
             TcStatus.HeatPending or TcStatus.CoolPending => s_orange,
-            TcStatus.TempCtrlDisabled => Brushes.Gray,
+            TcStatus.TempCtrlDisabled or TcStatus.IdleStopped => Brushes.Gray,
+            TcStatus.IdleStartBlocked or TcStatus.IdleOperatingConditionTripped => s_orange,
+            TcStatus.OperatingConditionPending => Brushes.OrangeRed,
             _ => Brushes.LightCyan,
         };
-        WarningText.Text = "Warning: " + Controller.Describe(c.Warning) + (c.Warning == TcWarning.RunningOnTemp2 ? "  (control on sensor 2 until Reset/Init)" : "");
+        WarningText.Text = "Warning: " + Controller.Describe(c.Warning) + (c.Warning == TcWarning.RunningOnTemp2 ? "  (control on sensor 2 until Reset/Init)" : "")
+                         + (c.Warning == TcWarning.OperatingConditionNotMet ? "  (run permissive is false: Start blocked or control stopped)" : "");
         WarningText.Foreground = c.Warning == TcWarning.NoWarning ? Brushes.LightSlateGray : s_orange;
+        LifecycleText.Text = $"Started {(c.Started ? 1 : 0)}    run permissive: live input {(_sim.RunPermissive ? 1 : 0)}, last evaluated {Fmt(c.RunPermissive)}    condition-fault countdown {c.OperatingConditionRemainMs:0} ms"
+                           + (c.Status == TcStatus.IdleStopped ? "    (Init / Stop / Reset leave the zone stopped: press Start)" : "")
+                           + (c.Status == TcStatus.IdleOperatingConditionTripped ? "    (a permissive loss stopped control; a new Start is required)" : "");
         ControlTempText.Text = $"t = {_sim.TimeSeconds:0.0} s    ControlTemp {Fmt(c.ControlTemp)}   Temp1Avg {Fmt(c.Temp1Avg)}   Temp2Avg {Fmt(c.Temp2Avg)}   band [{Fmt(c.LoBand)}, {Fmt(c.HiBand)}]   rc {c.LastRc}";
 
         DbMeter.Update(k.DeadbandTimeoutMs, c.DeadbandRemainMs, k.TempCtrlEnable, c.IsFault, false, Brushes.DeepSkyBlue);
@@ -242,6 +258,7 @@ public partial class MainWindow : Window
         CfbMeter.Update(k.RelayFeedbackTimeoutMs, c.CoolerFbRemainMs, k.TempCtrlEnable && k.FeedbackEnable, c.IsFault, false, Brushes.Orange);
         Acc1Meter.Update(k.ErrorTimeoutMs, c.Temp1OorAccumMs, k.TempCtrlEnable, c.IsFault, true, Brushes.Salmon);
         Acc2Meter.Update(k.ErrorTimeoutMs, c.Temp2OorAccumMs, k.TempCtrlEnable && k.Temp2Enable, c.IsFault, true, Brushes.Salmon);
+        OcMeter.Update(k.OperatingConditionTimeoutMs, c.OperatingConditionRemainMs, k.TempCtrlEnable, c.IsFault, false, Brushes.OrangeRed);
         MotorButton.IsEnabled = _sim.Config.Fixture.Enabled;
         MotorButton.Content = !_sim.Config.Fixture.Enabled ? "Motors: fixture inactive" : _sim.Config.Fixture.MotorsRunning ? "Stop motors" : "Start motors";
         HeatLamp.IsOn = c.DoHeater; CoolLamp.IsOn = c.DoCooler;
@@ -250,7 +267,7 @@ public partial class MainWindow : Window
                           $"Initial_HC_Flag {(c.InitialHcFlag ? 1 : 0)}    out-of-range events/h  S1 {c.Temp1OorEventsPerHour}  S2 {c.Temp2OorEventsPerHour}    FilterPoints in use {c.AppliedFilterPoints}" +
                           (_checksOk + _checksFailed > 0 ? $"\nScenario expectations: {_checksOk} ok, {_checksFailed} failed" : "");
 
-        FramesTitle.Text = $"NI-XNET raw frames (CanTp_Pack of the TcGetDiag array): J1939 BAM, {_sim.FrameCount} frames x 24 bytes, payload {_table.Length} bytes, unpack mismatches {_sim.UnpackMismatches}";
+        FramesTitle.Text = $"NI-XNET raw frames (CanTp_Pack of the {TcConst.DiagCount}-value TcGetDiag array, {_table.Source}): J1939 BAM, {_sim.FrameCount} frames x 24 bytes, payload {_table.Length} bytes, unpack mismatches {_sim.UnpackMismatches}";
         FramesText.Text = string.Join(Environment.NewLine, _sim.FrameLines()) + Environment.NewLine + "payload " + _sim.PayloadHex();
         var rows = new List<DecodedRow>(TcConst.DiagCount);
         for (int i = 0; i < TcConst.DiagCount; i++)
@@ -292,6 +309,7 @@ public partial class MainWindow : Window
         Num(ControllerPanel, "FilterPoints (1..64, else 4)", () => cc().FilterPoints, v => cc().FilterPoints = v);
         Bool(ControllerPanel, "FeedbackEnable", () => cc().FeedbackEnable, v => cc().FeedbackEnable = v);
         Num(ControllerPanel, "RelayFeedbackTimeout ms", () => cc().RelayFeedbackTimeoutMs, v => cc().RelayFeedbackTimeoutMs = v);
+        Num(ControllerPanel, "OperatingConditionTimeout ms (v4)", () => cc().OperatingConditionTimeoutMs, v => cc().OperatingConditionTimeoutMs = v);
 
         Num(PlantPanel, "Ambient", () => _sim.Plant.Ambient, v => { _cfg.Plant.Ambient = v; _sim.Plant.Ambient = v; }, false);
         Num(PlantPanel, "Heat rate deg/s", () => _sim.Plant.HeatRate, v => { _cfg.Plant.HeatRate = v; _sim.Plant.HeatRate = v; }, false);
@@ -372,7 +390,7 @@ public partial class MainWindow : Window
         p.Children.Add(row);
     }
 
-    /// <summary>Push the edited controller setup into the running simulation: TcInit with the full array (R9.3 keeps the relays).</summary>
+    /// <summary>Push the edited controller setup into the running simulation: TcStop, zero DOs, TcInit with the full array, TcStart when running (v4 R10.2).</summary>
     void ApplyConfig()
     {
         _sim.ApplyControllerConfig(_cfg.Controller);
