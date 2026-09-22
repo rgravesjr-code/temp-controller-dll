@@ -23,3 +23,6 @@ DoHeater
 DoCooler	
 AppliedFilterPoints	
 ZoneInitialized	
+RunPermissive	
+OperatingConditionRemainMs	ms
+ControllerStarted	

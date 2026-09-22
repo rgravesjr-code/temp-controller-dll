@@ -12,6 +12,8 @@ What is vendored (and nothing else):
   linux-arm64\libcantp.so      aarch64 Linux (Raspberry Pi)
   linux-armhf\libcantp.so      32-bit ARM Linux
   tools\dbc2tables.py          .dbc -> CanTp tables; run by tools\make_tempctl_dbc.py --tables
+  tools\ecdflat.py             J1939Msg(V4) cluster <-> bytes and .ecd reader; tools\make_tempctl_dbc.py
+                               --ecd builds dbc	empctl.ecd with it and reads the result back (TempCtl v4)
   LICENSE.txt                  MIT
 
 CanTp's documentation, source, tests, test executables and examples are in the
@@ -19,9 +21,10 @@ CanTp release package itself (the same zip, or the GitHub release). They are
 not duplicated here.
 
 Dependency rule:
-  TempCtl and TempSim call CanTp_Define, CanTp_PackSgl, CanTp_Unpack,
-  CanTp_RxFeed and the small query functions only. Every one of them exists
-  unchanged since CanTp v1.0.0, so the MINIMUM CanTp version is 1.0.0 and any
+  TempCtl and TempSim call CanTp_Define, CanTp_DefineFlat (v1.2.0+), CanTp_PackSgl, CanTp_Unpack,
+  CanTp_RxFeed and the small query functions only. All but CanTp_DefineFlat exist
+  unchanged since CanTp v1.0.0; CanTp_DefineFlat (the flattened ECD cluster) was
+  added in v1.2.0, so the MINIMUM CanTp version for TempCtl v4 is 1.2.0 and any
   later 1.x release is a drop-in replacement. A new CanTp release does NOT
   require a TempCtl release; re-vendor (and bump TempCtl) only when TempCtl
   starts using a newer CanTp function, or when a TempCtl release is being cut
