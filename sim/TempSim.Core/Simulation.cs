@@ -22,6 +22,7 @@ public sealed class Simulation : IDisposable
     public Controller Ctl { get; }
     public int Zone => Ctl.Zone;
     public Plant Plant { get; }
+    public FixtureModel Fixture { get; private set; } = new();
     public SensorModel Sensor1 { get; }
     public SensorModel Sensor2 { get; }
     public RelayModel Heater { get; }
@@ -59,6 +60,8 @@ public sealed class Simulation : IDisposable
     {
         NativeLoader.Register();
         Config = config;
+        if (config.PeriodMs < 1 || config.PeriodMs > 10000) throw new ArgumentException("PeriodMs must be 1..10000.");
+        if (config.Fixture.Enabled) config.Fixture.Validate();
         Table = table ?? MessageTable.Load(MessageTable.DefaultPath);
         if (Table.SignalCount != TcConst.DiagCount) throw new InvalidOperationException($"TempCtl.json does not match the controller's {TcConst.DiagCount} diagnostics");
         Table.Define(zone, Config.Can.SourceAddress);                       // CanTp slot = zone
@@ -88,6 +91,8 @@ public sealed class Simulation : IDisposable
         Tick = 0; Ticks = 0; UnpackMismatches = 0; ClockOffsetMs = 0;
         SeenStatuses.Clear(); Trace.Clear();
         Heater.Clear(); Cooler.Clear();
+        Fixture = new FixtureModel();
+        Fixture.SetTemperature(Plant.Temperature);
         HeaterOn = CoolerOn = false;
         ReadSensors(0.0);
         Ctl.Reset(NowMs);
@@ -125,6 +130,9 @@ public sealed class Simulation : IDisposable
     void ReadSensors(double dt)
     {
         double truth1 = Plant.Temperature, truth2 = Plant.Temperature;
+        // TempCtl compares redundant probes; both remain at the UUT outlet.
+        // Inlet and outlet are additional physical channels, not a redundant pair.
+        if (Config.Fixture.Enabled) truth1 = truth2 = Fixture.OutletTemperature;
         var p = ProfileAt(TimeSeconds);
         if (p != null) { truth1 = p.Temp1; truth2 = p.Temp2; }
         Temp1Raw = Sensor1.Read(truth1, dt, Rng);
@@ -137,7 +145,8 @@ public sealed class Simulation : IDisposable
         double dt = Config.PeriodMs / 1000.0;
         Tick++;
         // plant moves under the relay states decided last tick
-        Plant.Step(dt, HeaterOn, CoolerOn);
+        if (Config.Fixture.Enabled) Fixture.Step(dt, Plant, Config.Fixture, HeaterOn, CoolerOn, Config.Controller.TempUnits);
+        else Plant.Step(dt, HeaterOn, CoolerOn);
         ReadSensors(dt);
         // the DO read-back reflects the physical state reached after the last command
         Ctl.CheckTemp(NowMs, Temp1Raw, Temp2Raw, Heater.Contact, Cooler.Contact);

@@ -35,51 +35,103 @@ the libraries.
 
 ## 1. TempSim.exe (Windows)
 
-Start it and the plant runs from ambient toward the setpoint in real time.
+The dark blue thermal test bench shows the temperature chart and animated
+fixture together. It starts in **fixture physics** mode; the **Run fixture**
+button returns to that mode after a scripted controller scenario.
 
-- **Graph**: plant temperature (grey dashed), Temp1 (orange), Temp2 (blue),
-  ControlTemp (black), setpoint (green), HiBand/LoBand (dotted), limits (red
-  dashed); heating/cooling lanes below; orange shading = running on sensor 2
-  (warning 6), red = stopped on a fault (status >= 10). Last 120 s.
-- **Controller status**: the status code by name, the warning by name, the
-  values control uses (ControlTemp, both averages, the band), the five
-  countdowns (deadband, at-setpoint, disagreement, heater and cooler
-  feedback) and the two out-of-range accumulators as bars with their
-  remaining / accumulated milliseconds, lamps for the relay commands and the
-  DO read-backs, the active sensor, raw and corrected readings,
-  `Initial_HC_Flag`, the hourly out-of-range event counts and the
-  FilterPoints in use.
-- **Controller setup**: the 17 `TcInit` values. Every change (Enter or leave
-  the field) is a `TcInit` with the full array, so a running zone keeps its
-  relays exactly as the library specifies (R9.3), and an invalid setup shows
-  `ConfigFault` / `ConfigInvalid` at once.
-- **Plant**: ambient, heat/cool rates (deg/s), lag, and a "plant temperature
-  now" field to jump the process.
-- **Sensor 1 / 2**: offset, noise, lag, **Fault** (None / Open = NaN /
-  StuckLast / StuckValue), **Override** slider to drive a reading by hand.
-- **Relays**: stuck open / stuck closed (the DO read-back never follows the
-  command), answer delay in ticks (a DO-loop latency).
-- **Toolbar**: Pause/Run, **Reset (TcReset)**, **Restart (TcInit)** = new
-  plant, `TcReset` then `TcInit`, speed 1x/5x/20x/max, and the built-in
-  **scenarios** (Load = restart with that scenario's settings, timed events
-  and expectations; the text shows what fired and whether each expectation
-  held).
-- **Frames panel**: the raw records of the last tick (timestamp offset, ID,
-  TP.CM/TP.DT, payload hex) and the reassembled 55-byte payload, beside the
-  25 diagnostics decoded by `CanTp_Unpack` from those same bytes with the
-  controller's own values for comparison (note the wire resolution: 0.03125
-  deg for temperatures).
-- **Logging**: tick the box to write `%LOCALAPPDATA%\TempSim\logs\tempsim-<time>.csv`
-  and `.ncl` while running.
+- **Graph:** Temp1 (orange), Temp2 (cyan), control temperature (white), plant
+  (grey), setpoint and high/low deadband (green), signal max/min (salmon).
+  Signal max/min mean the configured controller validity limits, HiLimit and
+  LoLimit, not observed extrema. All lines retain their history; the chart
+  shows the last 120 simulated seconds. Heat/cool lanes show relay commands.
+- **Inlet/outlet:** supply inlet (mint), UUT outlet (purple), and signed ΔT = outlet minus inlet. Both controller probes measure the outlet, with independent sensor errors. The inlet/outlet channels are physical model values, separate from the redundant controller inputs.
+- **Fixture:** one to three motors, a circulating oil pump, inline oil heater,
+  unit under test, and an external fan. Oil particles move through the supply,
+  UUT and return. Motor, pump and fan rotation follows simulated motion;
+  rotation is slowed for visibility and is not a tachometer. Heater outline
+  shows physical relay state; delivered heat is also displayed.
+- **Time:** Run/Pause, restart, and 1x, 2x, 3x, 5x, 10x, 20x. Elapsed wall time
+  schedules fixed controller ticks without changing the physics step. Pause
+  freezes physics and animation. Under CPU overload the simulation catches up
+  in bounded batches; the displayed simulated time is authoritative.
+- **Live status:** controller status, warnings, countdowns, sensor accumulators,
+  command and feedback lamps, active sensor, raw/averaged temperatures.
+- **Configuration tab:** all 17 controller setup values, ambient temperature,
+  legacy plant rates, sensor offset/noise/lag and fault injection, relay
+  delay/stuck faults, and CSV/NI-XNET logging. Controller changes call TcInit.
+  Numeric inputs use a decimal point; Enter or leaving the field applies them.
+- **Fixture configuration:** a separate scrollable screen for every fixture
+  physics parameter. Edit values and select **Apply physics**. Invalid values
+  show an explanation without changing the running model. The modal screen
+  pauses time while editing and restores the previous Run/Pause state.
+- **CAN data:** raw J1939 records and all 25 decoded diagnostics, with scrolling.
 
-Settings (all of the above) persist in `%LOCALAPPDATA%\TempSim\settings.json`
-and the window position in `window.json`. Delete them to start over.
+### Estimated physical model
 
-Headless check (used by the release gate):
-`TempSim.exe --screenshot out.png [--scenario NAME] [--seconds N]` runs the
-scenario flat out, renders the window to `out.png`, writes `out.perf.txt`
-and exits with 0 only when there were no unpack mismatches and every
-expectation of the scenario held.
+These are first-pass assumptions, not measured bench calibration. Two thermal
+masses represent the supply oil (UUT inlet) and the oil held inside the UUT
+plus its fixture mass (UUT outlet). Each mass is internally well mixed.
+Actuation deposits motor heat in the UUT; recirculating oil carries that heat
+back to the supply. Both redundant controller probes measure the outlet with
+independently configurable offset, lag and noise. Local hot spots and pipe
+transport delays are not modeled.
+The requested inline component is interpreted as an **inline oil heater**.
+
+| Parameter | Starting estimate |
+|---|---|
+| Motors | 2, commanded running; configurable count 1–3 |
+| Each motor | 1.5 kW rated, 1800 / 3000 rpm, 60% load, 25% heat fraction |
+| Motor response | 2 s |
+| Oil pump | Running, 12 L/min, 1 s response |
+| Inline heater | 6 kW; 4 L/min gives 50% transfer |
+| Oil | 8 L total, including 0.5 L inside UUT; 0.85 kg/L, 2000 J/(kg·K) |
+| Fixture | 12 kg, 500 J/(kg·K) |
+| Passive heat loss | 8 W/K to ambient |
+| Fan | Automatic from cooler relay; 1600 / 2000 rpm |
+| Fan cooling / response | 120 W/K at rated speed; 1.5 s response |
+
+Supply heat capacity uses total oil volume minus UUT hold-up volume. Outlet
+heat capacity combines the UUT oil and fixture. Actuation heating scales with
+motor count, rated power, load, heat fraction and actual/rated speed. Heater
+delivery to the supply is rated power times flow / (flow + transfer-flow
+parameter). With zero flow, no heater energy is delivered, but actuation can
+continue heating the UUT. Passive and fan losses act on the UUT/outlet mass.
+
+Recirculation transfers heat at mass-flow rate times oil specific heat times
+the inlet/outlet difference. A coupled implicit update conserves internal heat
+transfer and remains stable at zero or high flow. The plant channel is the
+energy-weighted mean of both temperatures. Substeps are at most 50 ms.
+
+Actuation can make the outlet warmer than the inlet; more flow generally
+reduces the difference. During heater warm-up the inlet can instead be hotter.
+The signed ΔT retains both cases. The UUT oil hold-up, total oil volume,
+fixture mass, motor heat fraction, flow and fan losses are configurable.
+The motors and oil pump are independent operator commands; TempCtl still
+commands only heater and cooler. A controller fault drops its commands but
+is not a complete machine shutdown interlock. Manual fan mode is available.
+Changing TempUnits reinterprets numeric temperatures as F or C; it does not
+convert existing setpoints, limits or sensor offsets. SI thermal calculations
+account for the selected unit's temperature scale.
+
+Fixture edits preserve temperature and current speeds. Entering fixture mode
+from a controller scenario cancels its timed events/profiles and starts fresh
+controller state at the current temperature. **Run fixture** and **Restart**
+start from the configured initial plant temperature. Built-in scenarios always
+use the original plant model; the 110 controller expectations are unchanged.
+
+Settings persist in `%LOCALAPPDATA%\TempSim\settings.json`; window position
+is in `window.json`. Older settings without a Fixture section migrate to the
+new fixture mode. Existing settings with a Fixture section keep its selection.
+The CLI accepts `--scenario fixture --config FILE` for a custom fixture run;
+built-in controller scenarios deliberately disable fixture physics.
+
+CSV logging also writes `NAME.fixture.csv` when fixture mode is active: time, enabled flag, temperature units (0=F, 1=C), inlet, outlet, signed ΔT, oil flow, actuation heat, heater heat and cooling power. These additional physical channels do not alter the controller diagnostics or CAN layout. The original CSV/NCL formats remain unchanged.
+
+Headless rendering: `TempSim.exe --screenshot out.png --scenario fixture
+--seconds 60`. Use `--scenario failover --seconds 75` for the controller gate.
+Optional `--view physics`, `--view configuration`, or `--view can` captures
+those screens. The render check uses a fixed window size, ignores saved user
+settings, writes `out.perf.txt`, and leaves saved settings untouched.
 
 ## 2. TempSim.Cli
 
@@ -188,3 +240,7 @@ package_sim.bat X.Y.Z [password] ["rids"]       :: dist\TempSim_vX.Y.Z_<rid>{,.z
 and vendored `cantp` (from `third_party\cantp`) binaries per
 RuntimeIdentifier; `sim\Directory.Build.props` holds TempSim's version.
 `dotnet run --project sim\TempSim.Cli` works for a quick Windows x64 run.
+
+### Status display and motor controls (2.2.1)
+
+Timer tracks show explicit Idle, Disabled, Timing or Fault snapshot states, with milliseconds and configured thresholds. Active countdown bars drain; sensor invalid-reading bars fill and recover. The drive symbols are finned motor housings with rotating shafts. Start/Stop motors on the toolbar controls their shared run command independently of the heater and external fan. Motor speed coasts down after Stop; Pause freezes the entire simulation.

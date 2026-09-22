@@ -9,7 +9,8 @@ public sealed class PlotView : FrameworkElement
 {
     /// <summary>Status >= 10 is a fault (red shading); warning 6 (RunningOnTemp2) is shaded orange.</summary>
     public sealed record Sample(double T, double Plant, double Temp1, double Temp2, double Ctrl, double Setpoint,
-                                double HiBand, double LoBand, double HiLimit, double LoLimit, bool Heat, bool Cool, int Status, int Warning);
+                                double HiBand, double LoBand, double HiLimit, double LoLimit, bool Heat, bool Cool, int Status, int Warning,
+                                double Inlet = double.NaN, double Outlet = double.NaN);
 
     readonly List<Sample> _samples = new();
     public double WindowSeconds { get; set; } = 120;
@@ -17,14 +18,16 @@ public sealed class PlotView : FrameworkElement
 
     static readonly Typeface s_font = new("Segoe UI");
     static readonly Pen s_axis = new(Brushes.Gray, 1);
-    static readonly Pen s_grid = new(new SolidColorBrush(Color.FromRgb(230, 230, 230)), 1);
+    static readonly Pen s_grid = new(new SolidColorBrush(Color.FromRgb(32, 61, 82)), 1);
     static readonly Pen s_plant = new(new SolidColorBrush(Color.FromRgb(160, 160, 160)), 1) { DashStyle = DashStyles.Dash };
     static readonly Pen s_t1 = new(new SolidColorBrush(Color.FromRgb(230, 120, 0)), 1.2);
-    static readonly Pen s_t2 = new(new SolidColorBrush(Color.FromRgb(0, 110, 220)), 1.2);
-    static readonly Pen s_ctrl = new(Brushes.Black, 2);
-    static readonly Pen s_sp = new(new SolidColorBrush(Color.FromRgb(0, 150, 0)), 1.5);
-    static readonly Pen s_band = new(new SolidColorBrush(Color.FromRgb(0, 150, 0)), 1) { DashStyle = DashStyles.Dot };
-    static readonly Pen s_limit = new(Brushes.Red, 1) { DashStyle = DashStyles.Dash };
+    static readonly Pen s_t2 = new(Brushes.DeepSkyBlue, 2);
+    static readonly Pen s_ctrl = new(Brushes.AliceBlue, 1);
+    static readonly Pen s_inlet = new(Brushes.Aquamarine, 2);
+    static readonly Pen s_outlet = new(Brushes.Orchid, 2) { DashStyle = DashStyles.Dash };
+    static readonly Pen s_sp = new(Brushes.MediumSpringGreen, 1.5);
+    static readonly Pen s_band = new(Brushes.MediumSpringGreen, 1) { DashStyle = DashStyles.Dot };
+    static readonly Pen s_limit = new(Brushes.Salmon, 1) { DashStyle = DashStyles.Dash };
     static readonly Brush s_heat = new SolidColorBrush(Color.FromArgb(120, 230, 60, 30));
     static readonly Brush s_cool = new SolidColorBrush(Color.FromArgb(120, 40, 120, 240));
     static readonly Brush s_stopped = new SolidColorBrush(Color.FromArgb(40, 255, 0, 0));
@@ -32,7 +35,7 @@ public sealed class PlotView : FrameworkElement
 
     static PlotView()
     {
-        foreach (var p in new[] { s_axis, s_grid, s_plant, s_t1, s_t2, s_ctrl, s_sp, s_band, s_limit }) p.Freeze();
+        foreach (var p in new[] { s_axis, s_grid, s_plant, s_t1, s_t2, s_ctrl, s_sp, s_band, s_limit, s_inlet, s_outlet }) p.Freeze();
         foreach (var b in new[] { s_heat, s_cool, s_stopped, s_degraded }) b.Freeze();
     }
 
@@ -47,7 +50,7 @@ public sealed class PlotView : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         double W = ActualWidth, H = ActualHeight;
-        dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, W, H));
+        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(14, 36, 56)), null, new Rect(0, 0, W, H));
         if (W < 50 || H < 50) return;
         const double left = 44, right = 8, top = 8, laneH = 14, bottom = 22;
         double plotH = H - top - bottom - 2 * laneH - 4;
@@ -64,7 +67,7 @@ public sealed class PlotView : FrameworkElement
         double yMin = double.PositiveInfinity, yMax = double.NegativeInfinity;
         void Acc(double v) { if (!double.IsNaN(v) && !double.IsInfinity(v)) { yMin = Math.Min(yMin, v); yMax = Math.Max(yMax, v); } }
         Acc(last.LoLimit); Acc(last.HiLimit);
-        foreach (var s in view) { Acc(s.Plant); Acc(s.Temp1); Acc(s.Temp2); Acc(s.Ctrl); }
+        foreach (var s in view) { Acc(s.Plant); Acc(s.Temp1); Acc(s.Temp2); Acc(s.Ctrl); Acc(s.HiLimit); Acc(s.LoLimit); Acc(s.Setpoint); Acc(s.HiBand); Acc(s.LoBand); Acc(s.Inlet); Acc(s.Outlet); }
         if (double.IsInfinity(yMin)) { yMin = 0; yMax = 100; }
         double pad = Math.Max(2, (yMax - yMin) * 0.08); yMin -= pad; yMax += pad;
 
@@ -109,26 +112,35 @@ public sealed class PlotView : FrameworkElement
         {
             if (double.IsNaN(v) || v < yMin || v > yMax) return;
             double y = Y(v);
-            dc.DrawLine(pen, new Point(left, y), new Point(left + plotW, y));
             var ft = Text(label, pen.Brush);
             dc.DrawText(ft, new Point(left + plotW - ft.Width - 2, y - ft.Height));
         }
-        HLine(last.HiLimit, s_limit, "HiLimit"); HLine(last.LoLimit, s_limit, "LoLimit");
-        HLine(last.HiBand, s_band, "HiBand"); HLine(last.LoBand, s_band, "LoBand");
-        HLine(last.Setpoint, s_sp, "Setpoint");
+        HLine(last.HiLimit, s_limit, $"Signal max {last.HiLimit:0.#}"); HLine(last.LoLimit, s_limit, $"Signal min {last.LoLimit:0.#}");
+        HLine(last.HiBand, s_band, $"DB high {last.HiBand:0.#}"); HLine(last.LoBand, s_band, $"DB low {last.LoBand:0.#}");
+        HLine(last.Setpoint, s_sp, $"Setpoint {last.Setpoint:0.#}");
 
         // series
         dc.PushClip(new RectangleGeometry(new Rect(left, top, plotW, plotH)));
+        Series(dc, view, s => s.HiLimit, s_limit, X, Y);
+        Series(dc, view, s => s.LoLimit, s_limit, X, Y);
+        Series(dc, view, s => s.HiBand, s_band, X, Y);
+        Series(dc, view, s => s.LoBand, s_band, X, Y);
+        Series(dc, view, s => s.Setpoint, s_sp, X, Y);
         Series(dc, view, s => s.Plant, s_plant, X, Y);
         Series(dc, view, s => s.Temp1, s_t1, X, Y);
         Series(dc, view, s => s.Temp2, s_t2, X, Y);
         Series(dc, view, s => s.Ctrl, s_ctrl, X, Y);
+        Series(dc, view, s => s.Inlet, s_inlet, X, Y);
+        Series(dc, view, s => s.Outlet, s_outlet, X, Y);
         dc.Pop();
 
         // legend
         double lx = left + 6, ly = top + 4;
-        foreach (var (name, pen) in new[] { ("plant", s_plant), ("Temp1", s_t1), ("Temp2", s_t2), ("ControlTemp", s_ctrl) })
+        var legend = new List<(string, Pen)> { ("plant", s_plant), ("Temp1", s_t1), ("Temp2", s_t2), ("ControlTemp", s_ctrl) };
+        if (view.Any(s => double.IsFinite(s.Inlet))) { legend.Add(("UUT inlet", s_inlet)); legend.Add(("UUT outlet", s_outlet)); }
+        foreach (var (name, pen) in legend)
         {
+            if (lx + 30 + Text(name).Width > left + plotW) { lx = left + 6; ly += 16; }
             dc.DrawLine(pen, new Point(lx, ly + 7), new Point(lx + 18, ly + 7));
             var ft = Text(name);
             dc.DrawText(ft, new Point(lx + 22, ly));
@@ -163,5 +175,5 @@ public sealed class PlotView : FrameworkElement
     }
 
     static FormattedText Text(string s, Brush? brush = null) =>
-        new(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, s_font, 11, brush ?? Brushes.DimGray, 1.0);
+        new(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, s_font, 11, brush ?? Brushes.LightSteelBlue, 1.0);
 }

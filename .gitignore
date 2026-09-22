@@ -23,3 +23,6 @@ claudetodelete/
 out/
 sim/**/bin/
 sim/**/obj/
+tests/TempSim.FixtureChecks/bin/
+tests/TempSim.FixtureChecks/obj/
+output/

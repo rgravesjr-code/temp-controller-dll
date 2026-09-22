@@ -9,6 +9,7 @@ public partial class App : Application
     public static string? ScreenshotPath { get; private set; }
     public static string ScreenshotScenario { get; private set; } = "failover";
     public static int ScreenshotSeconds { get; private set; } = 70;
+    public static string ScreenshotView { get; private set; } = "dashboard";
 
     void OnStartup(object sender, StartupEventArgs e)
     {
@@ -19,6 +20,7 @@ public partial class App : Application
                 case "--screenshot": ScreenshotPath = e.Args[++i]; break;
                 case "--scenario": ScreenshotScenario = e.Args[++i]; break;
                 case "--seconds": ScreenshotSeconds = int.Parse(e.Args[++i]); break;
+                case "--view": ScreenshotView = e.Args[++i]; break;
                 case "--native-dir": NativeLoader.NativeDir = e.Args[++i]; break;
             }
         }

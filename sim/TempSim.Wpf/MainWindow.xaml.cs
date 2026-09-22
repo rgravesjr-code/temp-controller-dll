@@ -25,6 +25,8 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _timer = new();
     int _speed = 1;
     bool _running = true;
+    readonly System.Diagnostics.Stopwatch _wallClock = System.Diagnostics.Stopwatch.StartNew();
+    double _lastWallSeconds, _pendingSeconds;
     Queue<(double At, string Label, Action<Simulation> Apply)> _events = new();
     Queue<(double At, string Label, Func<Simulation, bool> Check)> _checks = new();
     int _checksOk, _checksFailed;
@@ -42,7 +44,17 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         NativeLoader.Register();
-        try { if (File.Exists(SettingsFile)) _cfg = SimConfig.Load(SettingsFile); } catch { _cfg = new SimConfig(); }
+        _cfg.Fixture.Enabled = true;
+        try
+        {
+            if (App.ScreenshotPath == null && File.Exists(SettingsFile))
+            {
+                _cfg = SimConfig.Load(SettingsFile);
+                using var settings = JsonDocument.Parse(File.ReadAllText(SettingsFile));
+                if (!settings.RootElement.TryGetProperty("Fixture", out _)) _cfg.Fixture.Enabled = true;
+            }
+        }
+        catch { _cfg = new SimConfig(); _cfg.Fixture.Enabled = true; }
         _cfg.Profile.Clear(); _cfg.Companion = null;                       // the interactive app drives the plant, one zone
         _table = MessageTable.Load(MessageTable.DefaultPath);
         var av = typeof(MainWindow).Assembly.GetName().Version;
@@ -51,15 +63,16 @@ public partial class MainWindow : Window
         ScenarioCombo.SelectedIndex = 0;
         BuildPanels();
         Restart();
-        LoadWindowBounds();
+        if (App.ScreenshotPath == null) LoadWindowBounds();
         _timer.Tick += OnTimer;
-        _timer.Interval = TimeSpan.FromMilliseconds(_cfg.PeriodMs);
+        _timer.Interval = TimeSpan.FromMilliseconds(33);
         Loaded += OnLoaded;
     }
 
     void OnLoaded(object? sender, RoutedEventArgs e)
     {
         if (App.ScreenshotPath != null) { RunScreenshot(); return; }
+        _lastWallSeconds = _wallClock.Elapsed.TotalSeconds;
         _timer.Start();
     }
 
@@ -71,6 +84,9 @@ public partial class MainWindow : Window
         _events.Clear(); _checks.Clear(); _checksOk = _checksFailed = 0;
         EventText.Text = "";
         Plot.Clear();
+        Plot.Add(CurrentSample());
+        _pendingSeconds = 0;
+        _lastWallSeconds = _wallClock.Elapsed.TotalSeconds;
         RefreshFromModels();
         UpdateUi();
     }
@@ -105,22 +121,55 @@ public partial class MainWindow : Window
         double t = (_sim.Tick + 1) * _sim.Config.PeriodMs / 1000.0;
         FireDueEvents(t);
         _sim.Step();
+        Plot.Add(CurrentSample());
         CheckDue(t);
         _csv?.Log(_sim); _ncl?.Log(_sim);
     }
 
     void OnTimer(object? sender, EventArgs e)
     {
+        double now = _wallClock.Elapsed.TotalSeconds;
+        double elapsed = now - _lastWallSeconds;
+        _lastWallSeconds = now;
         if (!_running) return;
-        int n = _speed;
-        for (int i = 0; i < n; i++) StepOnce();
+        _pendingSeconds += elapsed * _speed;
+        double period = _sim.Config.PeriodMs / 1000.0;
+        int n = 0;
+        while (_pendingSeconds + 1e-9 >= period && n++ < 200) { StepOnce(); _pendingSeconds -= period; }
         UpdateUi();
     }
 
-    void OnRunPause(object sender, RoutedEventArgs e) { _running = !_running; RunButton.Content = _running ? "Pause" : "Run"; }
+    void OnRunPause(object sender, RoutedEventArgs e) { _running = !_running; _lastWallSeconds = _wallClock.Elapsed.TotalSeconds; RunButton.Content = _running ? "Pause" : "Run"; }
     void OnReset(object sender, RoutedEventArgs e) { _sim.Reset(); UpdateUi(); }
     void OnRestart(object sender, RoutedEventArgs e) { Restart(); }
-    void OnSpeedChanged(object sender, SelectionChangedEventArgs e) { _speed = SpeedCombo.SelectedIndex switch { 0 => 1, 1 => 5, 2 => 20, _ => 50 }; }
+    void OnSpeedChanged(object sender, SelectionChangedEventArgs e) { _speed = SpeedCombo.SelectedIndex switch { 0 => 1, 1 => 2, 2 => 3, 3 => 5, 4 => 10, _ => 20 }; _lastWallSeconds = _wallClock.Elapsed.TotalSeconds; }
+
+    void OnConfigureFixture(object sender, RoutedEventArgs e)
+    {
+        bool resume = _running; _running = false;
+        var dialog = new FixtureConfigWindow(_sim.Config.Fixture) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            bool enteringFixture = dialog.Result.Enabled && !_sim.Config.Fixture.Enabled;
+            _cfg.Fixture = dialog.Result;
+            if (enteringFixture)
+            {
+                _cfg.Plant.Initial = _sim.Plant.Temperature;
+                _cfg.Profile.Clear(); _cfg.Companion = null;
+                Restart();
+            }
+            else _sim.Config.Fixture = dialog.Result;
+            UpdateUi();
+        }
+        _running = resume; _lastWallSeconds = _wallClock.Elapsed.TotalSeconds;
+    }
+
+    void OnFixtureMode(object sender, RoutedEventArgs e)
+    {
+        _cfg.Profile.Clear(); _cfg.Companion = null; _cfg.Fixture.Enabled = true;
+        Restart();
+        EventText.Text = "Fixture physics active · configurable estimates · motor/pump commands independent of TempCtl";
+    }
 
     void OnLoadScenario(object sender, RoutedEventArgs e)
     {
@@ -157,13 +206,21 @@ public partial class MainWindow : Window
     {
         var c = _sim.Ctl; var k = _sim.Config.Controller;
         return new PlotView.Sample(_sim.TimeSeconds, _sim.Plant.Temperature, _sim.Temp1Raw, _sim.Temp2Raw, c.ControlTemp,
-            k.Setpoint, c.HiBand, c.LoBand, k.HiLimit, k.LoLimit, c.DoHeater, c.DoCooler, (int)c.Status, (int)c.Warning);
+            k.Setpoint, c.HiBand, c.LoBand, k.HiLimit, k.LoLimit, c.DoHeater, c.DoCooler, (int)c.Status, (int)c.Warning,
+            _sim.Config.Fixture.Enabled ? _sim.Fixture.InletTemperature : double.NaN,
+            _sim.Config.Fixture.Enabled ? _sim.Fixture.OutletTemperature : double.NaN);
     }
 
     void UpdateUi()
     {
         var c = _sim.Ctl; var k = _sim.Config.Controller;
-        Plot.Add(CurrentSample());
+        Fixture.Update(_sim);
+        string unit = k.TempUnits == 0 ? "°F" : "°C";
+        LiveReadings.Text = $"SET {k.Setpoint:0.0} {unit}    T1 {Fmt(_sim.Temp1Raw)}    T2 {Fmt(_sim.Temp2Raw)}    BAND {c.LoBand:0.0}–{c.HiBand:0.0}    t {_sim.TimeSeconds:0.0}s";
+        FlowReadings.Text = _sim.Config.Fixture.Enabled
+            ? $"UUT INLET  {_sim.Fixture.InletTemperature:0.00} {unit}     OUTLET  {_sim.Fixture.OutletTemperature:0.00} {unit}     ΔT (out − in)  {_sim.Fixture.DeltaTemperature:+0.00;-0.00;0.00} {unit}     ACTUATION HEAT  {_sim.Fixture.MotorHeatW:0} W"
+            : "Inlet / outlet channels available in fixture mode";
+        ChartUnits.Text = $"{unit} · last 120 simulated seconds";
 
         StatusText.Text = Controller.Describe(c.Status);
         StatusText.Foreground = c.IsFault ? Brushes.Red : c.Status switch
@@ -172,19 +229,21 @@ public partial class MainWindow : Window
             TcStatus.CoolerON => s_cool,
             TcStatus.HeatPending or TcStatus.CoolPending => s_orange,
             TcStatus.TempCtrlDisabled => Brushes.Gray,
-            _ => Brushes.Black,
+            _ => Brushes.LightCyan,
         };
         WarningText.Text = "Warning: " + Controller.Describe(c.Warning) + (c.Warning == TcWarning.RunningOnTemp2 ? "  (control on sensor 2 until Reset/Init)" : "");
-        WarningText.Foreground = c.Warning == TcWarning.NoWarning ? Brushes.DimGray : s_orange;
+        WarningText.Foreground = c.Warning == TcWarning.NoWarning ? Brushes.LightSlateGray : s_orange;
         ControlTempText.Text = $"t = {_sim.TimeSeconds:0.0} s    ControlTemp {Fmt(c.ControlTemp)}   Temp1Avg {Fmt(c.Temp1Avg)}   Temp2Avg {Fmt(c.Temp2Avg)}   band [{Fmt(c.LoBand)}, {Fmt(c.HiBand)}]   rc {c.LastRc}";
 
-        Bar(DbBar, DbText, k.DeadbandTimeoutMs, c.DeadbandRemainMs);
-        Bar(AspBar, AspText, k.AtSetPtTimeoutMs, c.AtSetPtRemainMs);
-        Bar(CmpBar, CmpText, k.TempCompareTimeoutMs, c.CompareRemainMs);
-        Bar(HfbBar, HfbText, k.RelayFeedbackTimeoutMs, c.HeaterFbRemainMs);
-        Bar(CfbBar, CfbText, k.RelayFeedbackTimeoutMs, c.CoolerFbRemainMs);
-        Bar(Acc1Bar, Acc1Text, k.ErrorTimeoutMs, c.Temp1OorAccumMs);
-        Bar(Acc2Bar, Acc2Text, k.ErrorTimeoutMs, c.Temp2OorAccumMs);
+        DbMeter.Update(k.DeadbandTimeoutMs, c.DeadbandRemainMs, k.TempCtrlEnable, c.IsFault, false, Brushes.DeepSkyBlue);
+        AspMeter.Update(k.AtSetPtTimeoutMs, c.AtSetPtRemainMs, k.TempCtrlEnable, c.IsFault, false, Brushes.MediumSpringGreen);
+        CmpMeter.Update(k.TempCompareTimeoutMs, c.CompareRemainMs, k.TempCtrlEnable && k.Temp2Enable, c.IsFault, false, Brushes.Orange);
+        HfbMeter.Update(k.RelayFeedbackTimeoutMs, c.HeaterFbRemainMs, k.TempCtrlEnable && k.FeedbackEnable, c.IsFault, false, Brushes.Orange);
+        CfbMeter.Update(k.RelayFeedbackTimeoutMs, c.CoolerFbRemainMs, k.TempCtrlEnable && k.FeedbackEnable, c.IsFault, false, Brushes.Orange);
+        Acc1Meter.Update(k.ErrorTimeoutMs, c.Temp1OorAccumMs, k.TempCtrlEnable, c.IsFault, true, Brushes.Salmon);
+        Acc2Meter.Update(k.ErrorTimeoutMs, c.Temp2OorAccumMs, k.TempCtrlEnable && k.Temp2Enable, c.IsFault, true, Brushes.Salmon);
+        MotorButton.IsEnabled = _sim.Config.Fixture.Enabled;
+        MotorButton.Content = !_sim.Config.Fixture.Enabled ? "Motors: fixture inactive" : _sim.Config.Fixture.MotorsRunning ? "Stop motors" : "Start motors";
         HeatLamp.IsOn = c.DoHeater; CoolLamp.IsOn = c.DoCooler;
         HeatFbLamp.IsOn = _sim.Heater.Contact; CoolFbLamp.IsOn = _sim.Cooler.Contact;
         SensorText.Text = $"Active sensor {c.ActiveSensor}    Temp1 {Fmt(_sim.Temp1Raw)}   Temp2 {Fmt(_sim.Temp2Raw)} (corrected {Fmt(c.Temp2Corrected)})   plant {_sim.Plant.Temperature:0.00}\n" +
@@ -202,11 +261,12 @@ public partial class MainWindow : Window
         DecodedList.ItemsSource = rows;
     }
 
-    static void Bar(ProgressBar bar, TextBlock text, double max, double value)
+    void OnToggleMotors(object sender, RoutedEventArgs e)
     {
-        max = Math.Max(1, max);
-        bar.Maximum = max; bar.Value = Math.Min(max, value);
-        text.Text = value > 0 ? $"{value:0} ms" : "";
+        bool run = !_sim.Config.Fixture.MotorsRunning;
+        _cfg.Fixture.MotorsRunning = run;
+        _sim.Config.Fixture.MotorsRunning = run;
+        UpdateUi();
     }
 
     static string Fmt(double v) => double.IsNaN(v) ? "NaN" : v.ToString("0.###", CultureInfo.InvariantCulture);
@@ -237,7 +297,7 @@ public partial class MainWindow : Window
         Num(PlantPanel, "Heat rate deg/s", () => _sim.Plant.HeatRate, v => { _cfg.Plant.HeatRate = v; _sim.Plant.HeatRate = v; }, false);
         Num(PlantPanel, "Cool rate deg/s", () => _sim.Plant.CoolRate, v => { _cfg.Plant.CoolRate = v; _sim.Plant.CoolRate = v; }, false);
         Num(PlantPanel, "Lag to ambient 1/s", () => _sim.Plant.LagPerSec, v => { _cfg.Plant.LagPerSec = v; _sim.Plant.LagPerSec = v; }, false);
-        Num(PlantPanel, "Plant temperature now", () => _sim.Plant.Temperature, v => _sim.Plant.Temperature = v, false);
+        Num(PlantPanel, "Set entire loop temperature now", () => _sim.Plant.Temperature, v => { _sim.Plant.Temperature = v; _sim.Fixture.SetTemperature(v); }, false);
 
         SensorPanel(Sensor1Panel, () => _sim.Sensor1, () => _cfg.Sensor1);
         SensorPanel(Sensor2Panel, () => _sim.Sensor2, () => _cfg.Sensor2);
@@ -281,7 +341,7 @@ public partial class MainWindow : Window
         void Commit()
         {
             if (_suppress) return;
-            if (double.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) { set(v); if (reinit) ApplyConfig(); box.Background = Brushes.White; }
+            if (double.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && double.IsFinite(v)) { set(v); if (reinit) ApplyConfig(); box.ClearValue(Control.BackgroundProperty); }
             else box.Background = Brushes.MistyRose;
         }
         box.LostFocus += (_, _) => Commit();
@@ -362,7 +422,7 @@ public partial class MainWindow : Window
     // ------------------------------------------------------------------ headless verification
     void RunScreenshot()
     {
-        var sc = Scenario.Find(App.ScreenshotScenario) ?? Scenario.BuiltIn()[0];
+        var sc = App.ScreenshotScenario == "fixture" ? new Scenario("fixture", "Estimated fixture physics", new SimConfig { Fixture = new FixtureConfig { Enabled = true } }) : Scenario.Find(App.ScreenshotScenario) ?? Scenario.BuiltIn()[0];
         for (int i = 0; i < ScenarioCombo.Items.Count; i++)
             if ((string)((ComboBoxItem)ScenarioCombo.Items[i]).Tag == sc.Name) ScenarioCombo.SelectedIndex = i;
         LoadScenario(sc);
@@ -371,15 +431,23 @@ public partial class MainWindow : Window
         for (int i = 0; i < ticks; i++)
         {
             StepOnce();
-            if (i % 5 == 0) Plot.Add(CurrentSample());
         }
         double simMs = sw.Elapsed.TotalMilliseconds;
         UpdateUi();
         Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
         {
+            Window capture = this;
+            if (App.ScreenshotView == "physics")
+            {
+                capture = new FixtureConfigWindow(_sim.Config.Fixture) { Owner = this };
+                capture.Show();
+            }
+            if (App.ScreenshotView == "configuration") DashboardTabs.SelectedIndex = 1;
+            if (App.ScreenshotView == "can") DashboardTabs.SelectedIndex = 2;
             UpdateLayout();
-            var rtb = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
-            rtb.Render(this);
+            capture.UpdateLayout();
+            var rtb = new RenderTargetBitmap((int)capture.ActualWidth, (int)capture.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(capture);
             var enc = new PngBitmapEncoder();
             enc.Frames.Add(BitmapFrame.Create(rtb));
             using (var f = File.Create(App.ScreenshotPath!)) enc.Save(f);

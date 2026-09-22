@@ -69,7 +69,14 @@ static class Program
         var msgTable = MessageTable.Load(table ?? MessageTable.DefaultPath);
         if (rxIface != null) return Receive(rxIface, msgTable, baseConfig.Seconds);
 
-        var scenarios = string.Equals(scenario, "all", StringComparison.OrdinalIgnoreCase)
+        if (string.Equals(scenario, "fixture", StringComparison.OrdinalIgnoreCase))
+        {
+            baseConfig.Fixture.Enabled = true;
+            baseConfig.Profile.Clear(); baseConfig.Companion = null;
+        }
+        var scenarios = string.Equals(scenario, "fixture", StringComparison.OrdinalIgnoreCase)
+            ? new[] { new Scenario("fixture", "Supply inlet and UUT outlet with actuation heating", baseConfig) }
+            : string.Equals(scenario, "all", StringComparison.OrdinalIgnoreCase)
             ? Scenario.BuiltIn(baseConfig)
             : new[] { Scenario.Find(scenario!, baseConfig) ?? throw new ArgumentException($"no scenario '{scenario}' (try --list)") };
         if (seconds != null) foreach (var sc in scenarios) sc.Config.Seconds = seconds.Value;   // --seconds overrides the scenario's own length
@@ -164,6 +171,7 @@ static class Program
             two-zone scenarios also write DIR/NAME.zone1.csv. Each scenario's expectations are checked and reported;
             exit code 1 on any failed expectation or unpack mismatch.
             --every S       print a state line every S seconds (default 5; 0 = every tick)
+            --scenario fixture  run fixture physics; also writes NAME.fixture.csv (inlet/outlet/delta/heat/flow)
             --config FILE   JSON with plant/sensor/relay/controller/CAN settings and an optional temperature profile (see docs)
             --can IFACE     Linux only: also transmit every frame on a SocketCAN interface (e.g. can1)
             --realtime      pace the run at the simulation period instead of running flat out

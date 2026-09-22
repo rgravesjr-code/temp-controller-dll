@@ -62,7 +62,7 @@ public sealed class Scenario
     // ---- built-in scenarios (TEMPCTL-v3.0.0-HANDOFF section 10) ------------------------------------------
     public static IReadOnlyList<Scenario> BuiltIn(SimConfig? baseConfig = null)
     {
-        SimConfig Base() => (baseConfig ?? new SimConfig()).Clone();
+        SimConfig Base() { var config = (baseConfig ?? new SimConfig()).Clone(); config.Fixture.Enabled = false; return config; }
         static SimConfig Single(SimConfig c) { c.Controller.Temp2Enable = false; c.Controller.FeedbackEnable = false; return c; }
         /// exact readings: no sensor offsets / noise, no Temp2Offset, values from a profile
         static SimConfig Flat(SimConfig c) { c.Sensor1.Offset = 0; c.Sensor2.Offset = 0; c.Controller.Temp2Offset = 0; c.Profile.Clear(); return c; }

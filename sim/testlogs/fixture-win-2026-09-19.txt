@@ -1,0 +1,19 @@
+TempSim 2.1.0 fixture dashboard verification - Windows x64 - 2026-09-19
+Native libraries: TempCtl 3.0.0, CanTp 1.3.1.
+
+PASS: Windows WPF self-contained publish (build/sim-preview/win-x64).
+PASS: Linux x64 and Linux ARM64 CLI self-contained cross-publishes.
+PASS: all 16 controller scenarios, 110/110 expectations, zero unpack mismatches.
+PASS: all 33 CSV/NCL outputs byte-identical to existing build/sim/win-x64-out baseline.
+PASS: tests/TempSim.FixtureChecks, 19/19 checks.
+PASS: fixture dashboard, physics configuration, controller configuration, CAN view
+      rendered at 60 simulated seconds and visually inspected.
+PASS: fixture run at 240 seconds, TempAtSetPt, NoWarning, zero unpack mismatches.
+PASS: failover screenshot at 75 seconds, 7 expectations checked, zero failures,
+      BothSensorsFailed, Temp2OutOfRange, zero unpack mismatches (expected fault).
+PASS: simulator version consistency check for 2.1.0.
+
+Artifacts: out/fixture-review (screenshots, perf reports and scenario CSV/NCL).
+Physics remains an estimated one-mass model; no bench calibration performed.
+Linux publishes were compiled only. New fixture physics has not been executed
+on Raspberry Pi or cRIO; prior platform logs do not certify the new model.

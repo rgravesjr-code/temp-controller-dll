@@ -13,6 +13,7 @@ public sealed class SimConfig
     public uint StartTickMs { get; set; } = 0;
 
     public PlantConfig Plant { get; set; } = new();
+    public FixtureConfig Fixture { get; set; } = new();
     public SensorConfig Sensor1 { get; set; } = new() { Offset = 0.3 };
     public SensorConfig Sensor2 { get; set; } = new() { Offset = -0.2 };
     public RelayConfig Heater { get; set; } = new();

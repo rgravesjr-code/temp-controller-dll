@@ -7,6 +7,43 @@ printed by both programs at start-up and recorded in the package's
 
 ---
 
+## v2.2.1 - 2026-09-20
+
+- Replace ambiguous blank timer tracks with explicit idle/disabled/fault states,
+  colored active bars, milliseconds remaining and sensor accumulation values.
+- Draw finned motor housings and rotating shafts instead of fan-like rotors.
+  Label each drive MOTOR M1/M2/M3 and add a toolbar Start/Stop motors button.
+- Verify idle, active-disagreement and fault screenshots. Controller and physics
+  behavior are unchanged; motor commands still operate independently of TempCtl.
+
+## v2.2.0 - 2026-09-19
+
+- Model distinct UUT inlet/outlet thermal masses with recirculation, actuation
+  heating at the UUT, supply heater input, and UUT fan/passive losses.
+- Add inlet/outlet graph traces, schematic readouts and signed outlet-minus-
+  inlet delta. Redundant controller probes both measure the outlet.
+- Expose UUT oil hold-up volume alongside total loop volume and existing
+  actuation/flow/thermal settings. Validate each thermal mass separately.
+- Add fixture CSV sidecar channels and CLI `--scenario fixture` for custom
+  physics runs. Existing controller CSV and CAN schemas remain unchanged.
+- Verify 30/30 physics checks, 110/110 controller expectations and a 600-second
+  fixture run without faults or unpack mismatches. Pi validation is pending.
+
+## v2.1.0 - 2026-09-19
+
+- Add a dark blue Windows dashboard with simultaneous temperature history and
+  animated oil-loop schematic: 1–3 motors, pump, inline heater, UUT and fan.
+- Add opt-in estimated fixture physics and a validated configuration screen
+  for motors, flow, heater power, thermal mass and fan response. Desktop starts
+  in fixture mode; existing scripted scenarios retain their original plant.
+- Add elapsed-wall-time pacing at 1x/2x/3x/5x/10x/20x and capture every tick in
+  the graph. Reference lines now retain the history of setpoint/limit edits.
+- Keep controller configuration, fault injection, logging and CAN inspection
+  available in tabs. Add headless captures for the fixture and settings views.
+- Windows verification: 110/110 existing scenario expectations, 19/19 new
+  physics checks and rendered dashboard/configuration/CAN/failover screens.
+  Raspberry Pi verification of the new fixture model is still pending.
+
 ## v2.0.0 - 2026-09-18
 
 Simulator for TempCtl **3.0.0** (new API: `TcInit` / `TcCheckTemp` /

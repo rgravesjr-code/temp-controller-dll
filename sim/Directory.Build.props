@@ -1,6 +1,6 @@
 <Project>
   <!-- TempSim's own version, independent of the tempctl / cantp libraries it embeds. Bump with sim/CHANGELOG.md. -->
   <PropertyGroup>
-    <Version>2.0.0</Version>
+    <Version>2.2.1</Version>
   </PropertyGroup>
 </Project>

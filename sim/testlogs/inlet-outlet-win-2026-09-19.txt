@@ -1,0 +1,16 @@
+TempSim 2.2.0 inlet/outlet verification - Windows x64 - 2026-09-19
+PASS: 30/30 fixture physics checks, including actuation temperature rise,
+      flow dependence, zero-flow isolation, node energy balance, thermal
+      equalization, temperature units and UUT oil-volume validation.
+PASS: 16 controller scenarios, 110/110 expectations, zero unpack mismatches.
+PASS: all 33 original controller CSV/NCL baseline files unchanged byte for byte.
+PASS: 600-second fixture run, TempAtSetPt / NoWarning, zero unpack mismatches.
+PASS: 6000 fixture CSV rows with consistent inlet/outlet/signed delta.
+PASS: 6000 ticks with both controller probes at outlet + configured offsets.
+PASS: dashboard and physics settings screenshots rendered and visually inspected.
+PASS: failover screenshot at 75 seconds: 7 expectations passed, zero failed.
+PASS: Windows self-contained WPF publish; simulator version validation 2.2.0.
+
+Artifacts: out/inlet-outlet-review.
+Physics uses two internally mixed thermal masses and estimated parameters.
+No new Pi/cRIO execution or physical bench calibration performed.
