@@ -11,6 +11,14 @@ lifecycle and a live run permissive on top of v3.0.0 with Amendment A.
 `TcVersion()` reports 0x040000, `TcSetupCount()` 18, `TcDiagCount()` 28.
 **Not backwards compatible with v3** (see Migration below).
 
+- Pre-release review corrections: repeated `TcStop` calls now age hourly
+  sensor-event history before rebasing time; eight new regression checks
+  cover Stop, stopped samples, clock wrap and no double-aging on Start.
+  Packaging rejects every nonzero oracle exit and missing/invalid inspected
+  assets. Target execution claims require the current version, successful
+  summary/exit and SHA-256 hashes of both target binaries. Corrected the
+  cRIO architecture guidance: the 906x family is ARM, not x86-64.
+
 - **New exports (V4-1, V4-2).** `TcStart(zone, nowMs, runPermissive, ...)`
   starts control when the zone is enabled, not faulted and the permissive
   is true, otherwise refuses it as `IdleStartBlocked` (7) with warning
@@ -54,7 +62,7 @@ lifecycle and a live run permissive on top of v3.0.0 with Amendment A.
   (32-bit ARM, EABI v5 hard float, Cortex-A9; the library imports nothing
   from libc); debug sections stripped from every Linux build; the same
   `tempctl.h` in every binary folder, byte-identical and hashed.
-- **Tests:** `test_tempctl` 2186 checks (was 1516): the v3 groups under the
+- **Tests:** `test_tempctl` 2194 checks (was 1516): the v3 groups under the
   lifecycle plus R10 groups labelled with the handoff's section 13 items;
   green on x64, x86 and the Raspberry Pi. Oracle rewritten for v4: 1346
   arrays bit-identical with cantools, table slot and ECD slot identical, U16

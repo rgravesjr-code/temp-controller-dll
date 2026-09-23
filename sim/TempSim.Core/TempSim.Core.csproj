@@ -7,4 +7,9 @@
     <RootNamespace>TempSim.Core</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TempSim.RegressionChecks" />
+    <!-- Generated from make_tempctl_dbc.py; runtime definitions must match this build's ABI. -->
+    <EmbeddedResource Include="..\..\dbc\tables\TempCtl.json" LogicalName="TempSim.TempCtl.json" />
+  </ItemGroup>
 </Project>

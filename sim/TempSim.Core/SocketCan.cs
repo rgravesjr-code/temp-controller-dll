@@ -32,10 +32,12 @@ public sealed unsafe class SocketCan : IDisposable
     struct PollFd { public int Fd; public short Events; public short REvents; }
 
     readonly int _fd;
+    readonly PacedFrameSender _sender;
+    bool _disposed;
     public string Interface { get; }
     public long FramesSent { get; private set; }
 
-    SocketCan(int fd, string iface) { _fd = fd; Interface = iface; }
+    SocketCan(int fd, string iface) { _fd = fd; Interface = iface; _sender = new PacedFrameSender(record => Send(record)); }
 
     public static SocketCan Open(string iface)
     {
@@ -71,6 +73,9 @@ public sealed unsafe class SocketCan : IDisposable
         }
     }
 
+    /// <summary>Send a complete message at its record spacing without blocking the controller loop.</summary>
+    public void SendPaced(byte[] records) => _sender.Send(records);
+
     /// <summary>Receive one frame as an NI-XNET raw record (24 bytes, timestamp 0). False on timeout.</summary>
     public bool TryReceive(Span<byte> record, int timeoutMs)
     {
@@ -88,5 +93,11 @@ public sealed unsafe class SocketCan : IDisposable
         return true;
     }
 
-    public void Dispose() { if (_fd >= 0) close(_fd); }
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { _sender.Dispose(); }
+        finally { close(_fd); }
+    }
 }

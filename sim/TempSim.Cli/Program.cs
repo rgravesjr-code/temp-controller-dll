@@ -66,19 +66,14 @@ static class Program
             foreach (var s in Scenario.BuiltIn(baseConfig)) Console.WriteLine($"  {s.Name,-16} {s.Description}");
             return 0;
         }
-        var msgTable = MessageTable.Load(table ?? MessageTable.DefaultPath);
-        if (msgTable.SignalCount != TcConst.DiagCount)
-        {
-            Console.Error.WriteLine($"{msgTable.Source} has {msgTable.SignalCount} signals; TempCtl v{TcConst.Major} has {TcConst.DiagCount} diagnostics (a v3 table has 25). Regenerate with tools/make_tempctl_dbc.py --tables --ecd.");
-            return 2;
-        }
+        MessageTable msgTable;
+        try { msgTable = MessageTable.LoadShipped(table); }
+        catch (Exception ex) { Console.Error.WriteLine("ERROR: " + ex.Message); return 2; }
         Console.WriteLine($"  message table {msgTable.Source}: {msgTable.SignalCount} signals, {msgTable.Length}-byte {msgTable.Transport}" + (msgTable.Flat != null ? " (CanTp_DefineFlat)" : ""));
-        if (table == null || !table.EndsWith(".ecd", StringComparison.OrdinalIgnoreCase))
-        {
-            try { Console.WriteLine("  " + MessageTable.CheckShippedEcd(msgTable)); }
-            catch (Exception ex) { Console.Error.WriteLine("ERROR: " + ex.Message); return 2; }
-        }
+        Console.WriteLine("  shipped JSON/ECD pair checked against this build's generated layout");
         if (rxIface != null) return Receive(rxIface, msgTable, baseConfig.Seconds);
+        // A real CAN bus must follow wall time; an accelerated run would overlap BAM transfers.
+        if (!string.IsNullOrEmpty(baseConfig.Can.Interface)) realtime = true;
 
         if (string.Equals(scenario, "fixture", StringComparison.OrdinalIgnoreCase))
         {
@@ -92,7 +87,7 @@ static class Program
             : new[] { Scenario.Find(scenario!, baseConfig) ?? throw new ArgumentException($"no scenario '{scenario}' (try --list)") };
         if (seconds != null) foreach (var sc in scenarios) sc.Config.Seconds = seconds.Value;   // --seconds overrides the scenario's own length
         Directory.CreateDirectory(outDir);
-        int worst = 0, checkedTotal = 0, failedTotal = 0;
+        int worst = 0, checkedTotal = 0, failedTotal = 0, remainingTotal = 0;
         foreach (var sc in scenarios)
         {
             Console.WriteLine();
@@ -101,7 +96,7 @@ static class Program
             using var ncl = new NclWriter(Path.Combine(outDir, sc.Name + ".ncl"));
             CsvLogger? csv1 = sc.Config.Companion != null ? new CsvLogger(Path.Combine(outDir, sc.Name + ".zone1.csv")) : null;
             double nextPrint = 0;
-            var t0 = DateTime.UtcNow;
+            var wallClock = System.Diagnostics.Stopwatch.StartNew();
             var res = sc.Run(msgTable, s =>
             {
                 csv.Log(s); ncl.Log(s);
@@ -111,25 +106,27 @@ static class Program
                     PrintRow(s);
                     nextPrint = every <= 0 ? 0 : nextPrint + every;
                 }
-                if (realtime)
-                {
-                    var due = t0 + TimeSpan.FromMilliseconds(s.Tick * (double)s.Config.PeriodMs);
-                    var wait = due - DateTime.UtcNow;
-                    if (wait > TimeSpan.Zero) Thread.Sleep(wait);
-                }
-            }, ev => { if (!quiet) Console.WriteLine($"      -> {ev}"); });
+            }, ev => { if (!quiet) Console.WriteLine($"      -> {ev}"); }, beforeStep: s =>
+            {
+                if (!realtime) return;
+                var wait = TimeSpan.FromMilliseconds((s.Tick + 1) * (double)s.Config.PeriodMs) - wallClock.Elapsed;
+                if (wait > TimeSpan.Zero) Thread.Sleep(wait);
+            });
             var sim = res.Sim;
             csv1?.Dispose();
             Console.WriteLine($"    {csv.Rows} ticks, {ncl.Records} raw frames, unpack mismatches {sim.UnpackMismatches}, expectations {res.Checked - res.Failed.Count}/{res.Checked} ok, " +
                               $"final status {Controller.Describe(sim.Ctl.Status)}, warning {Controller.Describe(sim.Ctl.Warning)}");
             foreach (var f in res.Failed) Console.WriteLine($"    FAIL {f}");
+            if (!res.Complete) Console.WriteLine($"    INCOMPLETE: {res.RemainingExpectations} expectations were not reached; increase --seconds.");
             Console.WriteLine($"    -> {csv.Path}, {ncl.Path}{(csv1 != null ? ", " + csv1.Path : "")}");
             checkedTotal += res.Checked; failedTotal += res.Failed.Count;
-            if (sim.UnpackMismatches > 0 || res.Failed.Count > 0) worst = 1;
+            remainingTotal += res.RemainingExpectations;
+            if (!res.Complete) worst = 2;
+            if (worst == 0 && (sim.UnpackMismatches > 0 || res.Failed.Count > 0)) worst = 1;
             sim.Dispose();
         }
         Console.WriteLine();
-        Console.WriteLine($"{scenarios.Count} scenario(s): {checkedTotal - failedTotal}/{checkedTotal} expectations ok, {(worst == 0 ? "ALL OK" : "FAILED")}");
+        Console.WriteLine($"{scenarios.Count} scenario(s): {checkedTotal - failedTotal}/{checkedTotal} expectations ok, {remainingTotal} not reached, {(worst == 0 ? "ALL OK" : worst == 2 ? "INCOMPLETE" : "FAILED")}");
         return worst;
     }
 
@@ -180,11 +177,11 @@ static class Program
 
             Outputs per scenario: DIR/NAME.csv (state per tick) and DIR/NAME.ncl (NI-XNET logfile of the BAM frames);
             two-zone scenarios also write DIR/NAME.zone1.csv. Each scenario's expectations are checked and reported;
-            exit code 1 on any failed expectation or unpack mismatch.
+            exit code 1 on any failed expectation or unpack mismatch, 2 when expectations were not reached.
             --every S       print a state line every S seconds (default 5; 0 = every tick)
             --scenario fixture  run fixture physics; also writes NAME.fixture.csv (inlet/outlet/delta/heat/flow)
             --config FILE   JSON with plant/sensor/relay/controller/CAN settings and an optional temperature profile (see docs)
-            --can IFACE     Linux only: also transmit every frame on a SocketCAN interface (e.g. can1)
+            --can IFACE     Linux only: transmit scheduled messages on SocketCAN (e.g. can1); implies --realtime
             --realtime      pace the run at the simulation period instead of running flat out
             --native-dir    folder holding tempctl/cantp libraries (default: next to the executable)
             --table FILE    the CanTp definition of the diagnostics message: TempCtl.json (dbc2tables) or tempctl.ecd

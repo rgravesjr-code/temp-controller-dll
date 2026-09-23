@@ -6,7 +6,7 @@ Start / Stop lifecycle and a live run permissive) on top of v3.0.0 with
 Amendment A. The rule numbers are the handoffs': R1..R9 are the v3 rules,
 kept unchanged except where the lifecycle gating requires (marked
 *amended*), R10 is the v4 lifecycle. Every statement is implemented and
-covered by the unit tests (`test_tempctl`, 2186 checks) and the simulator
+covered by the unit tests (`test_tempctl`, 2194 checks) and the simulator
 scenarios (TempSim 3.0.0, 29 scenarios). Words in `code` are the names used
 in `tempctl.h` and the simulator. Section 12 lists the decisions the
 implementation took where the handoffs left room, for markup.

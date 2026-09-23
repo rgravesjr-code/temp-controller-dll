@@ -11,11 +11,12 @@ integrator needs so nothing has to be rediscovered.
 
 | Target | Binary in this package | Architecture | Loader / runtime need | Executed in this release |
 |---|---|---|---|---|
-| Windows 64-bit (LabVIEW x64, Python, .NET) | `tempctl.dll`, `tempctl.lib`, `test_tempctl.exe` | PE x86-64 | none (static CRT, imports `KERNEL32.dll` only) | yes: 2186 unit checks, oracle |
-| Windows 32-bit LabVIEW 2026 | `x86\tempctl.dll`, `x86\tempctl.lib`, `x86\test_tempctl.exe` | PE x86 | none | yes: 2186 unit checks |
-| Intel cRIO-904x/905x/906x, NI Linux RT | `linux-x64\libtempctl.so`, `linux-x64\test_tempctl` | ELF64 x86-64, glibc 2.2.5+ | libc only | see `TESTLOG.txt` (owner-run log, or built and inspected) |
+| Windows 64-bit (LabVIEW x64, Python, .NET) | `tempctl.dll`, `tempctl.lib`, `test_tempctl.exe` | PE x86-64 | none (static CRT, imports `KERNEL32.dll` only) | yes: 2194 unit checks, oracle |
+| Windows 32-bit LabVIEW 2026 | `x86\tempctl.dll`, `x86\tempctl.lib`, `x86\test_tempctl.exe` | PE x86 | none | yes: 2194 unit checks |
+| Intel cRIO-904x/905x, NI Linux RT | `linux-x64\libtempctl.so`, `linux-x64\test_tempctl` | ELF64 x86-64, glibc 2.2.5+ | libc only | see `TESTLOG.txt` (owner-run log, or built and inspected) |
+| cRIO-906x (32-bit ARM) | **Do not use linux-x64.** The myRIO `linux-armhf` build needs separate ABI/image validation on this target. | ARM | target-dependent | not validated on cRIO-906x |
 | NI myRIO-1900, NI Linux RT (Xilinx Zynq-7010, dual Cortex-A9) | `linux-armhf\libtempctl.so`, `linux-armhf\test_tempctl` | ELF32 ARM, EABI v5, hard float (`-mcpu=cortex_a9`) | the library imports nothing from libc; the test needs glibc 2.4+ | see `TESTLOG.txt` (owner-run log, or built and inspected) |
-| Raspberry Pi 4/5 (bench) | `linux-arm64\libtempctl.so`, `linux-arm64\test_tempctl` | ELF64 AArch64, glibc 2.17+ | libc only | yes: 2186 unit checks, 29 simulator scenarios |
+| Raspberry Pi 4/5 (bench) | `linux-arm64\libtempctl.so`, `linux-arm64\test_tempctl` | ELF64 AArch64, glibc 2.17+ | libc only | yes: 2194 unit checks, 29 simulator scenarios |
 
 Every folder carries the same `tempctl.h` (byte-identical, hashed in
 `MANIFEST.txt`). `TcVersion()` returns `0x040000`; `TcSetupCount()` 18;
@@ -282,10 +283,10 @@ alias. Never leave an absolute Windows path in an RT wrapper.
 
 | Target | Copy | Then |
 |---|---|---|
-| Windows x64 | `tempctl.dll` (+ `third_party\cantp\cantp.dll` for CAN) next to the VI / EXE or on PATH | `test_tempctl.exe` -> `TempCtl 4.0.0 unit tests: 2186 passed, 0 failed` |
+| Windows x64 | `tempctl.dll` (+ `third_party\cantp\cantp.dll` for CAN) next to the VI / EXE or on PATH | `test_tempctl.exe` -> `TempCtl 4.0.0 unit tests: 2194 passed, 0 failed` |
 | Windows x86 (32-bit LabVIEW) | `x86\tempctl.dll` (+ `third_party\cantp\x86\cantp.dll`) | `x86\test_tempctl.exe` |
 | Intel cRIO | `scp linux-x64\libtempctl.so third_party\cantp\linux-x64\libcantp.so admin@<ip>:/usr/local/lib/`; `scp linux-x64\test_tempctl admin@<ip>:/home/admin/` | `ssh admin@<ip> "chmod 755 /usr/local/lib/lib*.so /home/admin/test_tempctl; /home/admin/test_tempctl"` |
-| myRIO-1900 | `scp linux-armhf\libtempctl.so third_party\cantp\linux-armhf\libcantp.so admin@<ip>:/usr/local/lib/`; `scp linux-armhf\test_tempctl admin@<ip>:/home/admin/` | same command; expect the same `2186 passed` line |
+| myRIO-1900 | `scp linux-armhf\libtempctl.so third_party\cantp\linux-armhf\libcantp.so admin@<ip>:/usr/local/lib/`; `scp linux-armhf\test_tempctl admin@<ip>:/home/admin/` | same command; expect the same `2194 passed` line |
 | Raspberry Pi (aarch64) | `linux-arm64\...` | same |
 
 SSH on an NI target: NI MAX -> the target -> System Settings -> Enable

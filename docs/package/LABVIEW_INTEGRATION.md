@@ -12,7 +12,7 @@ CanTp's header, binaries and two tools under `third_party\cantp\`.
 
 | Target | File in this package | Where it goes |
 |---|---|---|
-| Intel cRIO-904x/905x/906x (x64 NI Linux RT) | `linux-x64\libtempctl.so`, `third_party\cantp\linux-x64\libcantp.so` | `/usr/local/lib/` on the target |
+| Intel cRIO-904x/905x (x64 NI Linux RT) | `linux-x64\libtempctl.so`, `third_party\cantp\linux-x64\libcantp.so` | `/usr/local/lib/` on the target |
 | NI myRIO-1900 (32-bit ARM NI Linux RT) | `linux-armhf\libtempctl.so`, `third_party\cantp\linux-armhf\libcantp.so` | `/usr/local/lib/` on the target |
 | Target self-test | `linux-x64\test_tempctl` or `linux-armhf\test_tempctl` | anywhere on the target, run once |
 | Raspberry Pi 4/5 (aarch64) | `linux-arm64\...`, `third_party\cantp\linux-arm64\...` | same |
@@ -37,15 +37,22 @@ ssh admin@192.168.1.10 "chmod 755 /usr/local/lib/lib*.so /home/admin/test_tempct
 ```
 
 myRIO-1900: the same three lines with `linux-armhf\` in place of
-`linux-x64\`. Expected last line on either: `TempCtl 4.0.0 unit tests: 2186
+`linux-x64\`. Expected last line on either: `TempCtl 4.0.0 unit tests: 2194
 passed, 0 failed`. The CanTp package has the matching `test_cantp`.
 
-**Which .so?** cRIO-904x/905x/906x are x86_64 -> `linux-x64`. The
+**Which .so?** cRIO-904x/905x are x86_64 -> `linux-x64`. The
 myRIO-1900 is a Xilinx Zynq-7010 (dual Cortex-A9, 32-bit ARM, hard float)
 -> `linux-armhf`. A Raspberry Pi is aarch64 -> `linux-arm64`. All are built
 from the same source; `file libtempctl.so` on the target confirms the
 class. `TESTLOG.txt` says for each Linux target whether the test was
 executed on real hardware in this release or only built and inspected.
+
+The **cRIO-906x family is 32-bit ARM**, not Intel x86-64; do not deploy
+`linux-x64` or the x64-only TempSim CLI to those controllers. The supplied
+`linux-armhf` build targets myRIO-1900. Its compatibility with a particular
+906x image/ABI still requires validation on that target; it is not certified
+by the myRIO or Pi results. Check the exact model and target architecture.
+NI documents the [cRIO-9068 ARM Cortex-A9 processor](https://www.ni.com/en/shop/compactrio/what-are-compactrio-controllers/ni-compactrio-performance-controller--performance-and-throughput.html).
 
 ## 3. Importing the header (Import Shared Library wizard)
 

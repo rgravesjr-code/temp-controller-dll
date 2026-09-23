@@ -1277,6 +1277,25 @@ static void test_R10_start(void)
     base(); init0(); tk(50); tk(200); tk(50); stop0(); CHECK(dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 50);
     for (i = 0; i < 61; i++) { NOW += 60000u; tk(50); }
     CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0 && ST == TC_ST_IDLE_STOPPED && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 50);   /* the accumulator does not drain while stopped */
+    /* V4-D10: repeated Stop calls must age both rings before rebasing time. */
+    base(); two_sensor(); NOW = 0xFFFFFF00u; init0();
+    tk2(200, 200); stop0();
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1 && dg(TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR) == 1);
+    NOW += 59u * 60000u; stop0();
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1 && dg(TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR) == 1);
+    NOW += 2u * 60000u; stop0();
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0 && dg(TC_DIAG_TEMP2_OOR_EVENTS_PER_HOUR) == 0);
+    CHECK(dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 100 && dg(TC_DIAG_TEMP2_OOR_ACCUM_MS) == 100);
+    CHECK(ST == TC_ST_IDLE_STOPPED && DH == 0 && DC == 0);
+    base(); NOW = 0; init0(); tk(200); stop0();
+    for (i = 0; i < 61; i++) { NOW += 60000u; stop0(); tk(50); }
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 0 && dg(TC_DIAG_TEMP1_OOR_ACCUM_MS) == 100);
+    /* Same/backwards timestamps do not age history; Start must not count Stop's gap twice. */
+    base(); NOW = 100000u; init0(); tk(200); stop0(); stop0();
+    NOW -= 50000u; stop0();
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1);
+    NOW += 30u * 60000u; stop0(); start0(1);
+    CHECK(dg(TC_DIAG_TEMP1_OOR_EVENTS_PER_HOUR) == 1);
 }
 
 /* ----------------------------------------------------------------------- */

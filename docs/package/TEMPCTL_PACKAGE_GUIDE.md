@@ -4,7 +4,7 @@
 Call Library Function Node (CLFN) and any other caller that can load a native
 library: C/C++, Python (ctypes), .NET P/Invoke, MATLAB. It ships as
 `tempctl.dll` (Windows x64 and x86) and `libtempctl.so` (Linux x86_64 for the
-cRIO-904x/905x/906x, 32-bit ARM for the myRIO-1900, aarch64 for the
+cRIO-904x/905x, 32-bit ARM for the myRIO-1900, aarch64 for the
 Raspberry Pi). One header, one ABI, every build.
 
 **Calling convention:** C (cdecl) on all exports.

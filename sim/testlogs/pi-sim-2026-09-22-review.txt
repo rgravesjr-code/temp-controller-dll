@@ -1,0 +1,155 @@
+# TempSim 3.0.0 pre-release review validation, 2026-09-22
+# Host: pi-engine, aarch64; isolated /tmp/tempctl-review.ZZIfrw
+# Controller: 4.0.0; vendored CanTp: 1.3.1
+# Commands: ./TempSim.RegressionChecks; ./TempSim.FixtureChecks; ./TempSim.Cli --scenario all --out out --quiet
+# Fixture command: ./TempSim.Cli --scenario fixture --config noise.json --seconds 600 --out fixture-out --quiet
+# noise.json: {"Seconds":600,"Seed":123,"Sensor1":{"NoiseAmplitude":0.3},"Sensor2":{"NoiseAmplitude":0.3}}
+# All five processes exited 0. No live SocketCAN transmission performed.
+
+BINARY SHA-256 (Pi):
+aa7f5ccdb543d575a5da0bb8ed03de7406340f1bfcd0ead4eeaf1d4e2f892890  TempSim.Core.dll
+2333d99952673b729de71a01a1e09560771edb3209e66424d486e132409e0f4f  libtempctl.so
+9bdb725c59e2f4f3d040adb5c3ff16fdcaba26fa15a2c6e831fa990885235f42  libcantp.so
+604d9eab1dd0d6a3e193470a659ac74184ecfab00b74a9bd1458f32b178c9373  TempSim.Cli.dll
+2ca3f24d5ca05ae556869555a3b9b552249efab03bb247110db21cf5adf4338c  TempSim.RegressionChecks.dll
+512956b866697b61f49a8d356511335e238e58dcc66b29e33ffaa8110b639801  TempSim.FixtureChecks.dll
+
+REGRESSIONS:
+tempctl 4.0.0, cantp 1.3.1, linux-arm64
+ok noise stays within the configured symmetric amplitude
+ok noise covers both tails and has zero mean
+ok event uses its named sample time, including U32 wrap
+ok Start cannot charge the preceding stopped interval
+ok first elapsed active interval charges 100 ms
+ok Reset plus Start uses the current sample time
+ok plant timing probe starts while heating
+ok Stop at sample time preserves heat delivered during the previous interval
+ok stopped relay supplies no heat in the following interval
+ok all zone clocks advance before lifecycle events
+ok companion Start is timestamped correctly and leaves the other zone idle
+ok zero-duration scenario reports unreached expectations
+ok reject reordered 28-signal table
+ok reject changed wire scaling with unchanged row count
+ok reject changed message size
+ok reject malformed signal row
+ok shipped JSON and ECD agree with the embedded contract
+ok explicit ECD override cannot bypass a missing shipped ECD
+ok reject corrupt shipped ECD
+ok CAN message cycle is independent of 100 ms controller checks
+ok NCL frame timestamps never go backwards between BAMs
+ok live sender rejects overlapping transfers instead of accumulating a queue
+ok live sender honors the complete transfer's 350 ms span
+ok live bus write failures propagate
+ok reject a CAN cycle shorter than one BAM
+ok 16 concurrent zones match every serial diagnostic across 64,000 samples
+TempSim regression checks: 26 passed, 0 failed
+
+FIXTURE CHECKS:
+ok ambient equilibrium
+ok no oil flow means no heater delivery
+ok flowing oil delivers heater power
+ok repeatable state and animation phase
+ok three motors add three times the heat
+ok automatic fan increases cooling
+ok air cooling cannot cross ambient from below
+ok manual fan runs without cooler command
+ok SI physics agrees in Fahrenheit and Celsius
+ok heater energy balances combined oil and fixture heat capacity
+ok pump animation independent of motor command
+ok motors and pump coast down after stop
+ok invalid physical configuration rejected
+ok invalid physical configuration rejected
+ok invalid physical configuration rejected
+ok invalid physical configuration rejected
+ok invalid physical configuration rejected
+ok physics settings survive JSON round trip
+ok controller scenarios retain the legacy plant
+ok actuation heats outlet above inlet without heater
+ok inline heater warms inlet first during warm-up
+ok greater flow reduces actuation temperature rise
+ok stopped oil retains actuation heat in UUT without dividing by zero
+ok inlet/outlet equalize after actuation stops
+ok recirculation conserves stored thermal energy
+ok UUT actuation energy counted exactly once
+ok both thermal nodes convert consistently to Fahrenheit
+ok UUT hold-up volume must fit inside loop
+ok UUT hold-up volume must fit inside loop
+ok UUT hold-up volume must fit inside loop
+30/30 fixture checks passed
+
+SCENARIOS:
+29 scenario(s): 208/208 expectations ok, 0 not reached, ALL OK
+
+FIXTURE RUN:
+
+=== fixture: Supply inlet and UUT outlet with actuation heating
+    6000 ticks, 4800 raw frames, unpack mismatches 0, expectations 0/0 ok, final status TempAtSetPt (1), warning NoWarning (0)
+    -> fixture-out/fixture.csv, fixture-out/fixture.ncl
+
+1 scenario(s): 0/0 expectations ok, 0 not reached, ALL OK
+
+Windows/Pi comparison: all 63 CSV/NCL files byte-identical (60 scenario files plus 3 fixture files).
+The following Pi hashes were individually checked against the matching Windows files:
+302a30d0b9d15bf94c3a625867795545b4e667d8f9cd4a3e93a31e7be75ede06  out/blocked-start.csv
+9acfb9aba4f28117f8d1218eb63bafbd95dcbc265516cb2ad8df863f45ba5085  out/blocked-start.ncl
+a1e8aebe6f0c3194c830f4843026f69fdc3bc6a2641493ac087697ea01a660d7  out/chatter.csv
+cc787db6833b66e5aa7fa83d3eb7d4f2c4c372d797e9610611223324fef97c89  out/chatter.ncl
+34db65f2106ebd7cecac3330f744022971ca5f1e8cb2944048bc4cb75d6cf638  out/compare-gating.csv
+5c68479f5e90887d97077e45f51f81606005dfee3095808b82a66e2b33a74683  out/compare-gating.ncl
+b6c35067345345f1b775c9781b370cb7a5006eee6860c461d89051d1cb9f6228  out/config-fault.csv
+e153b84187909bbc877ad09943a4c0cf80ab72a4c8e12a884b2c3e0b3aad91bc  out/config-fault.ncl
+2a96de00e3040390cca563c1a59b7d8b9e710fde443c04eaab5917bdf67f7397  out/control-pause.csv
+a3e29673017056a3d76318e8b79237efb6f5de8040ee100e1f5eeb4c11a86b37  out/control-pause.ncl
+992fae605ce502fa053a828f4bc92165aa639c8815f4d072aa6b1d08cce2582f  out/cool-down.csv
+148ffe1459e6996ff6ca5785090ed2124f8185793ad261450149d6b44f851d0b  out/cool-down.ncl
+9233346a0ce090e3986213b6aa9fc9c91b331ce4383f603b5e174ef1254452be  out/disagree.csv
+7b3a4c26f2abaf317fad35650a1817ad70eb232958e849cc522a49cfde2c4022  out/disagree.ncl
+f91c532f9e4dcf9e3453949d1e73b418d148e5447a98ed3c309931781e3f8516  out/enable-disable.csv
+ca743030bf81d9301984b7f29ba8198be38b73b3cd73dbeb9e052e43fb53a0fe  out/enable-disable.ncl
+97534f338b5d04ef0d322117f83007ea58f839b59d61c3a2c0f31f0f7e79ef6f  out/failover.csv
+a2d7461d8c138218804fe5c076147333e5b9c83523682044b46a42fa096e7da6  out/failover.ncl
+83ff3c3fb5963156bc315d884247ae42ee7cf54a75edc6de2d77b97afcd6f220  out/flicker-25.csv
+504980ef0b9fe7efab8974f0034d0fa5dbcd9f5d124c6f112544d0c0a3a799fd  out/flicker-25.ncl
+4601f0c90ca007d790a6c2d0463412165b9b14d01042ae7670889ca897f9edc0  out/flicker.csv
+89298101d786cc9ee0f23985d88184ebcd0c65457fedf5c8be3db653eb4e3a0f  out/flicker.ncl
+8f8426695f2b8fb7060e6ddc3ec0907705b8c2878390b2025f0686aff93b2c69  out/heat-up.csv
+dffc48bcc182c0586b565b15d3116a24b5091bd8afc70ae2f7c3cb7e20f8cb39  out/heat-up.ncl
+e7c8b4e61b0142178c972084ecabe88ec50357436f690864cb93b4a53101bd4b  out/idle-before-start.csv
+e15b60260270283ec1551c2eb6bfc7be006d63fee483de08cb7253a45603aaa8  out/idle-before-start.ncl
+e4eb7d7ebe7696a6de70183e21c616577b2a684b132ec82e53597fd35e70ea08  out/permissive-fault-priority.csv
+3eed8adb64fcaa8a8ca1a5cccc966520815c1da05ba3c7e412840e7b30956db7  out/permissive-fault-priority.ncl
+1e49173b78bf0419e4bed19cf9839e5c37dd3d0152ae9eaf2ffed69199381d85  out/permissive-fault.csv
+3ea5bc657f11ffb7899650a397a0c3078f5c249c8e4378f41ecc87f5b2e044b8  out/permissive-fault.ncl
+f3582d4ab903fdcb4485c38d4bdba0980c72d7ee54d99e11e93383026515438e  out/permissive-recover.csv
+e86e963b93681debbda7a6411bbbd274aaf50b89d789a5176aa50019b664af95  out/permissive-recover.ncl
+a67ac7c19da04f06d41778e9a222a29041e0527fcd1a427729aefd8ea69a802f  out/permissive-trip.csv
+f2d29982067616b9cc11029b288011894c5ca09828d5ae17dd805a9a871661ed  out/permissive-trip.ncl
+431c1a74da7217381f3e5c79172be5c2d863d76d68f4b90585d4d12118274194  out/reconfigure-stop-init.csv
+53990fa3f07795c73d77c54cf35d1be13dd1a44acd55d6917b1849cb79303bfb  out/reconfigure-stop-init.ncl
+448ef5afb137bb2beb1fb48e255e40cf1765b69446633c4068dd370a56f64413  out/relay-feedback.csv
+fee3f4ee3ebc7b683531b615d6d95837048d99d145e455c411722f26b78d85fd  out/relay-feedback.ncl
+d9d853bde27ecbee567f8f586486e0e81d7440967d0d9e17e71ae13c365602ea  out/reset-stays-idle.csv
+a33de59ef64e3e06e5d512cb6aabcb7544717d8bf30bbc7dc4636a97973be237  out/reset-stays-idle.ncl
+921ec36b93df36b0af517e86b30553ca136870e9a867d36f503bf11da3880859  out/reset-stop-first.csv
+e302c865e8d9a86b96b1439fcc384e966a171149fe9ba1a5336039a11c057295  out/reset-stop-first.ncl
+3be6d011a5fefdc96c4ddebd6c3c7a9d7fb604adefdc0dcceca20118298aa957  out/reset.csv
+bce0d1c6021b1b60908d3faa97aa4dff8c460e968c77ce3ca2cd7f058949cc72  out/reset.ncl
+a52144c797f6afdcb067144246813db6893ba7f7b13033958ef511983eff9a8e  out/start-heat-cool.csv
+06f13403ad647f20762bcf4dcc190da501ccb48ae1631df25f8718e7cd4a407e  out/start-heat-cool.ncl
+7301086d5e8effa260d5726c83fa67425186d88da919fb287deae1d9599ab57f  out/start-while-pending.csv
+1a2e4b3602c216c0e57c3d2cb2ff91dede64890e633ade30dbddae6bea8e18f9  out/start-while-pending.ncl
+13b6a223c8a687350ef3d65c2f5ff874588cd04d7ecfa2410a0bdf50a20ad7fd  out/stop-from-active.csv
+5dc404431352e150376f2794941262cdd61788dac1cb62fba645897f14a88307  out/stop-from-active.ncl
+9a40f1adc6d86aa52561a876a7de262e69dcf7f7734bdc70b6f8314cbd660bf5  out/stop-while-pending.csv
+dbba6a3a3cefb2c9f9874627fe19c379af60e2cbcf9491d7fbdcc8dfef1e1a68  out/stop-while-pending.ncl
+797cab7bd2da7fe2de78144d418ac2bca0cb92640a8692f28dc30b61fd42b87e  out/time.csv
+cfb6ad6e78691353c76a50fed92eddaa1d4f04b103caca287853e76539d1b26b  out/time.ncl
+9a13f83018ed6b283ccd9bf2bcf8868b7fa04c0cac4caefbfef83efe9ef99bd7  out/two-zones-lifecycle.csv
+dfecb1db2f060102892d290c8b4f1f3917a28e54f1d3c72a8f7a9a6a3a227659  out/two-zones-lifecycle.ncl
+fdc763fecdc1303caf46b31ae547c0787414bc487ddbd4bd291d3efde5ac17bc  out/two-zones-lifecycle.zone1.csv
+92904a2d4a1d9572e0deefd6e51dc6f00452ea34976475f6a4394b4a4e24978a  out/two-zones.csv
+8c97750c1235d5702a48116ec31d065344e066f38f2c559b39e016fb78a9c6c2  out/two-zones.ncl
+5025e1875e12fc48ed5cd23b6287a1ea96533e57cbc2b2e7ce3b43bb5a467657  out/two-zones.zone1.csv
+c901f23ef909ae47367c92dc1838843166fd7674c02d7fe7e22e8961e10144e1  fixture-out/fixture.csv
+0e8f70c03e86cfa1d815bbef9792ce08682e4ad56cb5dfce6c39d51c769da242  fixture-out/fixture.fixture.csv
+917b4285197743c3a1fab9f5d82a222c17b0cc9a92e55272b5a6621db32a9458  fixture-out/fixture.ncl

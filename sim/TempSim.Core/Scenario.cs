@@ -26,10 +26,13 @@ public sealed class Scenario
         public Simulation Sim { get; init; } = null!;
         public int Checked { get; set; }
         public List<string> Failed { get; } = new();
+        public int RemainingExpectations { get; internal set; }
+        public bool Complete => RemainingExpectations == 0;
     }
 
     /// <summary>Run to completion; events fire before the tick whose time reaches them, expectations after it.</summary>
-    public Result Run(MessageTable? table, Action<Simulation>? observer = null, Action<string>? onEvent = null)
+    public Result Run(MessageTable? table, Action<Simulation>? observer = null, Action<string>? onEvent = null,
+                      Action<Simulation>? beforeStep = null)
     {
         var sim = new Simulation(Config, table);
         var result = new Result { Sim = sim };
@@ -39,14 +42,17 @@ public sealed class Scenario
         int ticks = Config.Seconds * 1000 / Config.PeriodMs;
         for (int i = 1; i <= ticks; i++)
         {
+            beforeStep?.Invoke(sim);
             double t = i * Config.PeriodMs / 1000.0;
-            while (pending.Count > 0 && pending.Peek().Item1 <= t + 1e-9)
+            sim.Step(s =>
             {
-                var (_, label, apply) = pending.Dequeue();
-                apply(sim);
-                onEvent?.Invoke($"{t,7:0.0} s  {label}");
-            }
-            sim.Step();
+                while (pending.Count > 0 && pending.Peek().Item1 <= t + 1e-9)
+                {
+                    var (_, label, apply) = pending.Dequeue();
+                    apply(s);
+                    onEvent?.Invoke($"{t,7:0.0} s  {label}");
+                }
+            });
             while (checks.Count > 0 && checks.Peek().Item1 <= t + 1e-9)
             {
                 var (_, label, check) = checks.Dequeue();
@@ -57,6 +63,7 @@ public sealed class Scenario
                 onEvent?.Invoke($"{t,7:0.0} s  {(ok ? "ok  " : "FAIL")} {label}   [status {Controller.Describe(sim.Ctl.Status)}, warning {Controller.Describe(sim.Ctl.Warning)}, relays {(sim.Ctl.DoHeater ? 1 : 0)}/{(sim.Ctl.DoCooler ? 1 : 0)}, started {(sim.Ctl.Started ? 1 : 0)}, perm {(sim.RunPermissive ? 1 : 0)}]");
             }
         }
+        result.RemainingExpectations = checks.Count;
         return result;
     }
 
@@ -265,9 +272,9 @@ public sealed class Scenario
             .Expect(11.8, "not yet failed", s => !s.Ctl.IsFault && s.Ctl.Temp1OorAccumMs == 1900)
             .Expect(11.9, "Temp1FailHigh", s => s.Ctl.Status == TcStatus.Temp1FailHigh && !s.Ctl.DoHeater && !s.Ctl.DoCooler)
             .At(20, "operator reset (sensor still open)", s => s.Reset())
-            .Expect(20.0, "reset clears fault, accumulator (one open tick charged again), averages, flag", s => !s.Ctl.IsFault && s.Ctl.Temp1OorAccumMs == 100 && !s.Ctl.InitialHcFlag && double.IsNaN(s.Ctl.Temp1Avg) && s.Ctl.Temp1OorEventsPerHour == 1)
-            .Expect(21.8, "counting again", s => !s.Ctl.IsFault && s.Ctl.Temp1OorAccumMs == 1900)
-            .Expect(21.9, "faults again after the full timeout", s => s.Ctl.Status == TcStatus.Temp1FailHigh)
+            .Expect(20.0, "reset clears fault, accumulator (zero elapsed since Start), averages, flag", s => !s.Ctl.IsFault && s.Ctl.Temp1OorAccumMs == 0 && !s.Ctl.InitialHcFlag && double.IsNaN(s.Ctl.Temp1Avg) && s.Ctl.Temp1OorEventsPerHour == 1)
+            .Expect(21.9, "counting again, one tick before expiry", s => !s.Ctl.IsFault && s.Ctl.Temp1OorAccumMs == 1900)
+            .Expect(22.0, "faults again after the full timeout", s => s.Ctl.Status == TcStatus.Temp1FailHigh)
             .At(25, "Sensor 1 back", s => s.Sensor1.Fault = SensorFault.None)
             .At(30, "operator reset", s => s.Reset())
             .Expect(30.0, "clean", s => !s.Ctl.IsFault && s.Ctl.Warning == TcWarning.NoWarning && s.Ctl.Temp1OorEventsPerHour == 0)

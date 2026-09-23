@@ -6,7 +6,7 @@ Two products, one repo, separate packages and version lines:
   validation and an explicit Start / Stop / run-permissive lifecycle for
   LabVIEW CLFN, signals in / signals out, no CAN inside. Plain C99, one
   source tree -> tempctl.dll (x64 + x86, MSVC) and libtempctl.so (linux-x64
-  for the Intel cRIO-904x/905x/906x, linux-armhf for the myRIO-1900,
+  for the Intel cRIO-904x/905x, linux-armhf for the myRIO-1900,
   linux-arm64 for the Raspberry Pi bench; zig cross-build). Version =
   TC_VERSION_* in src/tempctl.h (4.0.0). The diagnostics array (TcGetDiag,
   28 doubles) is the CAN message (dbc/tempctl.dbc, dbc/tempctl.ecd, 44-byte
@@ -34,7 +34,7 @@ and the history of the CanTp split.
 ## Build / verify / package
 
 ```bat
-build.bat all                               :: dll x64+x86, 2186-check gates on both, .so linux-x64 + linux-armhf + linux-arm64
+build.bat all                               :: dll x64+x86, 2194-check gates on both, .so linux-x64 + linux-armhf + linux-arm64
 python tools\make_tempctl_dbc.py --tables --ecd  :: dbc\tempctl.dbc + dbc\tables + dbc\tempctl.ecd (cantools; checks TC_DIAG_*/TC_ST_*/TC_WN_* vs tempctl.h, asserts 44 bytes, reads the ECD back)
 python tests\oracle_test.py                 :: TcInit/Start/CheckTemp/Stop/GetDiag -> CanTp_Pack (table slot + ECD slot) vs cantools, every array bit-for-bit -> ALL OK
 package_dist.bat 4.0.0 [pw]                 :: dist\TempCtl_v4.0.0{,.zip,_unencrypted.zip}; gates + regeneration check + oracle + target logs; refuses failures
@@ -62,7 +62,7 @@ cannot run on the aarch64 Pi (no 32-bit loader).
 ```
 src/tempctl.h        public API + index/code #defines (TC_SETUP_*, TC_DIAG_*, TC_ST_*, TC_WN_*); written for the LabVIEW import wizard
 src/tempctl.c        controller: lifecycle (started / idle / blocked / pending / tripped), leaky accumulators, hourly rings, countdowns, comparison, feedback, control, config check
-tests/test_main.c    2186 checks compiled with the source, one function per rule group (R10 groups labelled 13.x.y); tests/oracle_test.py (ctypes + cantools + ecdflat)
+tests/test_main.c    2194 checks compiled with the source, one function per rule group (R10 groups labelled 13.x.y); tests/oracle_test.py (ctypes + cantools + ecdflat)
 tools/make_tempctl_dbc.py   the only definition of the CAN message layout (over TC_DIAG_*); runs CanTp's dbc2tables.py; --ecd writes tempctl.ecd via CanTp's ecdflat.py
 dbc/                 generated tempctl.dbc, tempctl.ecd and tables (TempCtl.json is what the simulator loads; tempctl.ecd ships beside it and is cross-checked)
 third_party/cantp/   CanTp subset: cantp.h, binaries per target (incl. linux-armhf), tools/dbc2tables.py + ecdflat.py, LICENSE.txt, VENDORED.txt (version + sha256 + dependency rule)
@@ -77,7 +77,7 @@ sim/TempSim.Wpf      WPF: PlotView, fixture view, Start/Stop/Run permissive tool
 sim/NativeAssets.targets   copies tempctl (build\<rid>) + cantp (third_party) per RuntimeIdentifier; the csproj files copy TempCtl.json + tempctl.ecd
 sim/SIMULATOR.md, sim/CHANGELOG.md, sim/START_HERE.txt, sim/Directory.Build.props, sim/testlogs/   the TempSim package's docs + Pi logs
 scripts/             validate_package_version.ps1 (TempCtl), validate_sim_version.ps1 (TempSim),
-                     report_package_assets.ps1 (generic, same file as in can-tp-dll), xcopy_exclude.txt
+                     report_package_assets.ps1 (package inspection; requires assets, architecture and TempCtl exports), xcopy_exclude.txt
 claudetodelete/      parked: v1/v2 leftovers, old CanTp packages, old sim outputs (owner rule: never delete)
 build/ dist/ out/ output/   ignored
 ```
@@ -159,3 +159,13 @@ Cross-references inside shipped files use bare file names.
   never stored in the remote URL. Releases via the GitHub REST API; a
   TempCtl release attaches the TempCtl zips, a TempSim release (tag
   `tempsim-vX.Y.Z`) attaches the per-target TempSim zips.
+
+## Pre-release review verification
+
+The 2026-09-22 review corrections are recorded in docs/notes/REVIEW-CORRECTIONS-2026-09-22.md.
+Both simulator gates include tests/TempSim.FixtureChecks (30) and tests/TempSim.RegressionChecks (26),
+including 16-thread native-zone isolation. Timed actions run after all clocks/plants advance and before control.
+CAN pack/unpack stays per tick; NCL/transmission defaults to a 1000 ms message period and 50 ms frame spacing.
+Target execution logs must match version, successful summary/exit and both binary hashes (docs/package/TESTING.md).
+The latest Pi evidence is the *-2026-09-22-review.txt logs; all 63 scenario/fixture files match Windows.
+cRIO-906x is 32-bit ARM, not a linux-x64 target; the myRIO armhf build needs separate validation there.

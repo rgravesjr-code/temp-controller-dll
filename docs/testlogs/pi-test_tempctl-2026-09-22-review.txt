@@ -1,0 +1,7 @@
+# TempCtl pre-release review validation, 2026-09-22T23:49:19Z
+# host: Linux pi-engine 6.18.34+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.18.34-1+rpt1 (2026-06-09) aarch64 GNU/Linux
+# target: linux-arm64
+# test_sha256: 92104034cd522fd9e02ee88b612bfbcc1dd7966f6a0d7be230183eeac0258d63
+# library_sha256: 2333d99952673b729de71a01a1e09560771edb3209e66424d486e132409e0f4f
+TempCtl 4.0.0 unit tests: 2194 passed, 0 failed
+exit=0

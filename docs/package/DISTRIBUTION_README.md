@@ -22,10 +22,10 @@ not needed to use the controller.
 |---|---|
 | `tempctl.dll`, `tempctl.lib`, `tempctl.h` | The controller, **Windows x64** (64-bit LabVIEW, Python, .NET) |
 | `x86\tempctl.dll`, `x86\tempctl.lib`, `x86\tempctl.h` | The same library built **x86** for 32-bit LabVIEW 2026 |
-| `linux-x64\libtempctl.so`, `linux-x64\tempctl.h` | **NI Linux RT x86_64** (Intel cRIO-904x/905x/906x) |
+| `linux-x64\libtempctl.so`, `linux-x64\tempctl.h` | **NI Linux RT x86_64** (Intel cRIO-904x/905x) |
 | `linux-armhf\libtempctl.so`, `linux-armhf\tempctl.h` | **NI Linux RT 32-bit ARM** (myRIO-1900, Cortex-A9, hard float) |
 | `linux-arm64\libtempctl.so`, `linux-arm64\tempctl.h` | **aarch64 Linux** (Raspberry Pi 4/5) |
-| `test_tempctl.exe`, `x86\test_tempctl.exe`, `linux-*\test_tempctl` | Release-gate test for each target (`2186 passed, 0 failed`) |
+| `test_tempctl.exe`, `x86\test_tempctl.exe`, `linux-*\test_tempctl` | Release-gate test for each target (`2194 passed, 0 failed`) |
 | `tempctl.h` (every folder, and `src\`) | C header for the LabVIEW Import Shared Library wizard. The same file next to every binary, byte-identical (fixed-width integers and `double` only), so one set of wrapper VIs serves all targets |
 | `third_party\cantp\` | **CanTp v1.3.1**, the subset TempCtl needs, unmodified: `cantp.h`, `cantp.dll` (x64, `x86\`), `libcantp.so` (`linux-x64\`, `linux-armhf\`, `linux-arm64\`), `tools\dbc2tables.py`, `tools\ecdflat.py`, `LICENSE.txt`. `VENDORED.txt` has the version, the zip hash and the dependency rule (minimum CanTp 1.2.0 for `CanTp_DefineFlat`) |
 | `dbc\tempctl.dbc` | The diagnostics message: PGN 65280, id `0x18FF00FE`, 28 signals in `TcGetDiag` order, 44 bytes, J1939 BAM, U16 millisecond signals, status and warning value tables |
@@ -55,7 +55,7 @@ libc (the 32-bit ARM library imports nothing).
 **Verify on your machine**
 
 ```bat
-test_tempctl.exe                      -> TempCtl 4.0.0 unit tests: 2186 passed, 0 failed
+test_tempctl.exe                      -> TempCtl 4.0.0 unit tests: 2194 passed, 0 failed
 ```
 
 **Intel cRIO (x86_64)**
@@ -143,11 +143,15 @@ receiving side.
 
 ## Known limits
 
+- cRIO-906x is 32-bit ARM, not x86-64. Do not use `linux-x64` there;
+  the supplied myRIO `linux-armhf` build needs separate validation on a
+  906x image. TempSim has no 32-bit ARM package.
+
 - The Intel cRIO and the myRIO-1900 binaries were cross-compiled and
   inspected (ELF class, exports, imports, SONAME); `TESTLOG.txt` states
   whether each was executed on its target in this release. The identical
   source was executed on Windows x64 / x86 and on the Raspberry Pi
-  (aarch64) with the same 2186 checks and the same simulator outputs as
+  (aarch64) with the same 2194 checks and the same simulator outputs as
   Windows. Run `linux-*\test_tempctl` on your target as the first step.
 - The LabVIEW Import Shared Library wizard run and the LabVIEW RT wrapper
   tests are the LabVIEW side's acceptance steps (parser settings and the

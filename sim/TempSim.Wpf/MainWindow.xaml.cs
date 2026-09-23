@@ -56,7 +56,7 @@ public partial class MainWindow : Window
         }
         catch { _cfg = new SimConfig(); _cfg.Fixture.Enabled = true; }
         _cfg.Profile.Clear(); _cfg.Companion = null;                       // the interactive app drives the plant, one zone
-        _table = MessageTable.Load(MessageTable.DefaultPath);
+        _table = MessageTable.LoadShipped();
         var av = typeof(MainWindow).Assembly.GetName().Version;
         VersionText.Text = $"TempSim {(av != null ? $"{av.Major}.{av.Minor}.{av.Build}" : "?")}  |  " + NativeLoader.Describe() + $"  |  {_table.Message} PGN {(_table.CanId >> 8) & 0x3FFFF} ({_table.Length} bytes)";
         foreach (var s in Scenario.BuiltIn()) ScenarioCombo.Items.Add(new ComboBoxItem { Content = s.Name, Tag = s.Name, ToolTip = s.Description });
@@ -80,7 +80,6 @@ public partial class MainWindow : Window
     void Restart()
     {
         _sim?.Dispose();
-        _cfg.RunPermissive = PermissiveCheck.IsChecked == true;
         _sim = new Simulation(_cfg.Clone(), _table);
         _events.Clear(); _checks.Clear(); _checksOk = _checksFailed = 0;
         EventText.Text = "";
@@ -120,8 +119,7 @@ public partial class MainWindow : Window
     void StepOnce()
     {
         double t = (_sim.Tick + 1) * _sim.Config.PeriodMs / 1000.0;
-        FireDueEvents(t);
-        _sim.Step();
+        _sim.Step(_ => FireDueEvents(t));
         Plot.Add(CurrentSample());
         CheckDue(t);
         _csv?.Log(_sim); _ncl?.Log(_sim);
@@ -146,7 +144,7 @@ public partial class MainWindow : Window
     void OnStop(object sender, RoutedEventArgs e) { _sim.Stop(); UpdateUi(); }
     void OnPermissiveChanged(object sender, RoutedEventArgs e)
     {
-        if (_sim == null) return;                                         // fires during InitializeComponent
+        if (_sim == null || _suppress) return;                            // initialization / model refresh
         _sim.RunPermissive = PermissiveCheck.IsChecked == true;
         _cfg.RunPermissive = _sim.RunPermissive;
         UpdateUi();
@@ -401,7 +399,12 @@ public partial class MainWindow : Window
     void RefreshFromModels()
     {
         _suppress = true;
-        try { foreach (var r in _refreshers) r(); } finally { _suppress = false; }
+        try
+        {
+            PermissiveCheck.IsChecked = _sim.RunPermissive;
+            foreach (var r in _refreshers) r();
+        }
+        finally { _suppress = false; }
     }
 
     // ------------------------------------------------------------------ persistence
@@ -449,6 +452,8 @@ public partial class MainWindow : Window
         for (int i = 0; i < ticks; i++)
         {
             StepOnce();
+            if (PermissiveCheck.IsChecked != _sim.RunPermissive)
+                throw new InvalidOperationException("Run permissive checkbox differs from the simulated input.");
         }
         double simMs = sw.Elapsed.TotalMilliseconds;
         UpdateUi();
@@ -473,7 +478,7 @@ public partial class MainWindow : Window
             File.WriteAllText(Path.ChangeExtension(App.ScreenshotPath!, ".perf.txt"),
                 $"scenario {sc.Name}, {ticks} ticks simulated in {simMs:0.0} ms ({simMs / ticks * 1000:0.0} us/tick incl. TcGetDiag + pack + unpack), " +
                 $"final status {Controller.Describe(_sim.Ctl.Status)}, warning {Controller.Describe(_sim.Ctl.Warning)}, unpack mismatches {_sim.UnpackMismatches}, " +
-                $"expectations {_checksOk} ok / {_checksFailed} failed\n");
+                $"snapshot expectations {_checksOk} ok / {_checksFailed} failed / {_checks.Count} not yet due\n");
             Application.Current.Shutdown(ok ? 0 : 1);
         });
     }

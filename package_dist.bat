@@ -10,7 +10,8 @@ setlocal
 :: Everything under docs\package\ ships flat at the package root.
 :: Target execution logs (owner-run): docs\testlogs\pi-*.txt, crio-*.txt, myrio-*.txt.
 :: Windows x64/x86 gates, the regeneration check and the oracle are hard gates; a Linux target
-:: without a log is recorded in TESTLOG.txt as "built and inspected, not executed" (V4-D5).
+:: without a log is recorded as "built and inspected, not executed" for cRIO/myRIO (V4-D5).
+:: A matching successful Pi execution log remains required.
 
 set "VERSION=%~1"
 set "PASSWORD=%~2"
@@ -63,6 +64,8 @@ for %%F in ("build\win-x64\tempctl.dll" "build\win-x64\tempctl.lib" "build\win-x
 )
 
 echo Checking version references...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tests\test_release_gates.ps1"
+if errorlevel 1 ( echo ERROR: release-gate regression checks failed. & exit /b 1 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\validate_package_version.ps1" -Version "%VERSION%" -Root "%ROOT_NOSLASH%"
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 echo.
@@ -153,18 +156,20 @@ echo. >> "%OUT%\TESTLOG.txt"
 echo ============ Python oracle (tempctl.dll + cantp.dll vs cantools; tables and ECD) ============ >> "%OUT%\TESTLOG.txt"
 python "%ROOT%tests\oracle_test.py" %PYARGS% >> "%OUT%\TESTLOG.txt" 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo WARNING: oracle test did not pass or could not run ^(python/cantools missing?^). See TESTLOG.txt.
-    echo   ^(oracle test skipped or failed - see above^) >> "%OUT%\TESTLOG.txt"
-    findstr /C:"FAIL" "%OUT%\TESTLOG.txt" >nul && ( echo ERROR: oracle reported FAIL lines. Not packaging. & exit /b 1 )
+    echo ERROR: oracle failed or could not run. See TESTLOG.txt. Not packaging.
+    exit /b 1
 )
 
 echo. >> "%OUT%\TESTLOG.txt"
 echo ============ Linux targets ============ >> "%OUT%\TESTLOG.txt"
 echo Every .so and test_tempctl was cross-built from the same source and ELF-inspected here ^(DEPENDENCIES.txt^). >> "%OUT%\TESTLOG.txt"
 echo Execution on the target is recorded by a dated log in docs\testlogs\ ^(owner-run^): >> "%OUT%\TESTLOG.txt"
-call :TargetStatus "linux-arm64 - Raspberry Pi, aarch64" "pi-test_tempctl-*.txt"
-call :TargetStatus "linux-x64 - Intel cRIO, NI Linux RT x86_64" "crio-test_tempctl-*.txt"
-call :TargetStatus "linux-armhf - myRIO-1900, NI Linux RT 32-bit ARM" "myrio-test_tempctl-*.txt"
+call :TargetStatus linux-arm64 "pi-test_tempctl-*.txt" -RequireExecution
+if errorlevel 1 exit /b 1
+call :TargetStatus linux-x64 "crio-test_tempctl-*.txt"
+if errorlevel 1 exit /b 1
+call :TargetStatus linux-armhf "myrio-test_tempctl-*.txt"
+if errorlevel 1 exit /b 1
 echo The closed-loop simulator runs on the Raspberry Pi bench ^(linux-arm64 tempctl + cantp under TempSim^) are >> "%OUT%\TESTLOG.txt"
 echo recorded in the TempSim package ^(TESTLOG.txt and testlogs\ there^). LabVIEW and LabVIEW RT wrapper tests are >> "%OUT%\TESTLOG.txt"
 echo owner-executed ^(TESTING.md^). >> "%OUT%\TESTLOG.txt"
@@ -210,16 +215,10 @@ echo.
 dir /b "%OUT%"
 exit /b 0
 
-:: ---- %1 target description, %2 log file pattern under docs\testlogs ----------------------
+:: ---- %1 RID, %2 log file pattern under docs\testlogs ----------------------
 :TargetStatus
-set "TS_FOUND="
-for %%L in ("%ROOT%docs\testlogs\%~2") do set "TS_FOUND=%%~nxL"
-if defined TS_FOUND (
-    echo   %~1: EXECUTED on the target, log %TS_FOUND% ^(below^) >> "%OUT%\TESTLOG.txt"
-) else (
-    echo   %~1: built and ELF-inspected here, NOT executed on the target in this release ^(V4-D5^) >> "%OUT%\TESTLOG.txt"
-)
-exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\report_target_tests.ps1" -Root "%ROOT_NOSLASH%" -Version "%VERSION%" -Rid "%~1" -Pattern "%~2" %~3 >> "%OUT%\TESTLOG.txt" 2>&1
+exit /b %ERRORLEVEL%
 
 :Find7Zip
 for %%I in (7z.exe) do (

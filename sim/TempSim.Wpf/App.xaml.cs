@@ -26,7 +26,8 @@ public partial class App : Application
         }
         DispatcherUnhandledException += (_, ex) =>
         {
-            MessageBox.Show(ex.Exception.ToString(), "TempSim error");
+            if (ScreenshotPath == null) MessageBox.Show(ex.Exception.ToString(), "TempSim error");
+            else System.IO.File.WriteAllText(System.IO.Path.ChangeExtension(ScreenshotPath, ".error.txt"), ex.Exception.ToString());
             ex.Handled = ScreenshotPath == null;
             if (ScreenshotPath != null) Environment.Exit(3);
         };

@@ -97,6 +97,8 @@ public sealed class SimConfig
     {
         public int SourceAddress { get; set; } = 0x80;
         public int SpacingMs { get; set; } = 50;
+        /// <summary>Interval between complete messages; independent of the control period. Must exceed one transfer's span.</summary>
+        public int MessagePeriodMs { get; set; } = 1000;
         /// <summary>Linux SocketCAN interface to transmit on (e.g. "can1"); null = records only.</summary>
         public string? Interface { get; set; }
     }

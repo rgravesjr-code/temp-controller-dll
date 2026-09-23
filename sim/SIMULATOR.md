@@ -16,6 +16,11 @@ was built with and prints their versions at start-up. **TempSim 3.x drives
 TempCtl 4.x only**: a library with another major version, or a table with
 other than 28 signals, is refused with a clear message.
 
+Both applications require the JSON/ECD pair to match the generated wire
+layout embedded in the build. This catches changed scaling or reordered
+channels even when both external files were changed together. An explicit
+`--table` override still requires a valid shipped pair.
+
 ## Files in this package
 
 | File | Purpose |
@@ -190,6 +195,15 @@ the operating-condition countdown and Started), the events as they fire and
 each expectation with ok / FAIL, and ends with the tick count, frame count,
 unpack mismatches, expectations passed and the final status and warning.
 Exit code 1 if any scenario had an unpack mismatch or a failed expectation.
+If the requested duration ends before all expectations, the CLI reports
+how many were not reached and exits 2 with `INCOMPLETE`, including a
+zero-second run. Screenshots are snapshots; their report lists checks that
+are not yet due rather than claiming the whole scenario passed.
+
+Timed actions occur after all zone clocks and the plant have advanced to
+that sample, before sensor reads and control. A Stop at 1.0 s therefore
+preserves heat delivered from 0.9 to 1.0 s; a Start at 1.0 s cannot charge
+that preceding stopped interval to a sensor accumulator.
 
 ### Scenarios
 
@@ -275,15 +289,20 @@ JSON with `PeriodMs`, `Seconds`, `Seed`, `StartTickMs`, `StartOnInit`,
 `RunPermissive`, `Plant` (Ambient, Initial, LagPerSec, HeatRate, CoolRate),
 `Sensor1`/`Sensor2` (Offset, NoiseAmplitude, LagPerSec), `Heater`/`Cooler`
 (DelayTicks, StuckOpen, StuckClosed), `Controller` (the 18 setup values by
-name, `OperatingConditionTimeoutMs` last), `Can` (SourceAddress, SpacingMs,
+name, `OperatingConditionTimeoutMs` last), `Can` (SourceAddress, SpacingMs, MessagePeriodMs,
 Interface), `Profile` and `Companion`. The WPF app's
 `%LOCALAPPDATA%\TempSim\settings.json` has the same shape and can be passed
 to the CLI. Scenarios apply their own overrides on top of the file.
 
 ### Linux CAN (SocketCAN)
 
-`--can can1` also transmits every frame on the interface (the 8 records of a
-tick are written back-to-back; add `--realtime` to pace ticks). `--rx can0`
+Pack/unpack verification and CSV remain per control tick (100 ms by default).
+NCL logs and `--can can1` emit a complete message at the first sample, then
+every `Can.MessagePeriodMs` (1000 ms by default, rounded up to a control
+sample). Eight frames spaced by `Can.SpacingMs` (50 ms by default) span
+350 ms; the message period must exceed that span. Live transmission uses a
+separate paced sender and rejects overlap instead of queuing transfers.
+`--can` automatically enables real-time pacing. `--rx can0`
 listens, feeds every received frame to `CanTp_RxFeed` and prints each
 completed TempCtl message by signal name. Bring the interface up first, e.g.
 `sudo ip link set can0 up type can bitrate 250000`. A v3 receiver (55-byte

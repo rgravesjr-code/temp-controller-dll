@@ -11,7 +11,7 @@ public sealed class Rng
         return _s * 0x2545F4914F6CDD1DUL;
     }
     /// <summary>Uniform in [-1, 1) using 53 bits, exact in double.</summary>
-    public double NextSigned() => (NextU64() >> 11) * (1.0 / 4503599627370496.0) * 2.0 - 1.0;
+    public double NextSigned() => (NextU64() >> 11) * (1.0 / 9007199254740992.0) * 2.0 - 1.0;
 }
 
 /// <summary>

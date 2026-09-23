@@ -52,6 +52,19 @@ function Get-PeImports {
         throw "RVA 0x$($rva.ToString('X')) not mapped"
     }
     $imports = @()
+    $exports = @()
+    $exportRva = [BitConverter]::ToUInt32($b, $dirOff)
+    if ($exportRva -ne 0) {
+        $expOff = RvaToOff $exportRva
+        $namesCount = [BitConverter]::ToUInt32($b, $expOff + 24)
+        $namesOff = RvaToOff ([BitConverter]::ToUInt32($b, $expOff + 32))
+        for ($i = 0; $i -lt $namesCount; $i++) {
+            $nameOff = RvaToOff ([BitConverter]::ToUInt32($b, $namesOff + 4 * $i))
+            $end = $nameOff
+            while ($b[$end] -ne 0) { $end++ }
+            $exports += [Text.Encoding]::ASCII.GetString($b, $nameOff, $end - $nameOff)
+        }
+    }
     if ($importRva -ne 0) {
         $desc = RvaToOff $importRva
         while ($true) {
@@ -67,19 +80,27 @@ function Get-PeImports {
     [pscustomobject]@{
         Machine = if ($machine -eq 0x8664) { 'x64' } elseif ($machine -eq 0x14C) { 'x86' } else { "0x$($machine.ToString('X'))" }
         Imports = $imports
+        Exports = $exports
     }
 }
 
 $bad = $false
+$tcExports = @('TcVersion','TcSetupCount','TcDiagCount','TcInit','TcStart','TcStop','TcCheckTemp','TcReset','TcGetDiag')
 if ($peList.Count -or $elfList.Count) {
     $lines = @("$Product v$Version dependency report (generated at package time)", '')
     if ($Note) { $lines += $Note; $lines += '' }
     foreach ($rel in $peList) {
         $p = Join-Path $PackageDir $rel
-        if (-not (Test-Path -LiteralPath $p)) { continue }
+        if (-not (Test-Path -LiteralPath $p)) { throw "Required PE asset is missing: $rel" }
         $info = Get-PeImports $p
+        $expectedMachine = if ($rel -match '(^|[\\/])x86[\\/]') { 'x86' } else { 'x64' }
+        if ($info.Machine -ne $expectedMachine) { throw "$rel has machine $($info.Machine), expected $expectedMachine" }
+        if ([IO.Path]::GetFileName($rel) -eq 'tempctl.dll') {
+            foreach ($name in $tcExports) { if ($name -cnotin $info.Exports) { throw "$rel is missing export $name" } }
+        }
         $lines += "$rel  [$($info.Machine)]"
         foreach ($imp in $info.Imports) { $lines += "  imports $imp" }
+        $lines += "  exports $($info.Exports -join ', ')"
         $vcDeps = $info.Imports | Where-Object { $_ -match '(?i)vcruntime|msvcp|api-ms-win-crt|msvcr' }
         if ($vcDeps) {
             $lines += "  *** UNEXPECTED VC RUNTIME DEPENDENCY: $($vcDeps -join ', ') ***"
@@ -93,21 +114,31 @@ if ($peList.Count -or $elfList.Count) {
     # ELF report for the Linux artefacts (tools\elfinfo.py, needs python on PATH)
     foreach ($rel in $elfList) {
         $p = Join-Path $PackageDir $rel
-        if (-not (Test-Path -LiteralPath $p)) { continue }
+        if (-not (Test-Path -LiteralPath $p)) { throw "Required ELF asset is missing: $rel" }
         $lines += "$rel  [ELF]"
         $py = Get-Command python -ErrorAction SilentlyContinue
         if ($ElfInfoScript -and $py -and (Test-Path -LiteralPath $ElfInfoScript)) {
             $out = & $py.Source $ElfInfoScript $p 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "ELF inspection failed for $rel`: $out" }
+            $expected = if ($rel -match 'linux-armhf') { 'class ELF32 .* machine ARM$' }
+                        elseif ($rel -match 'linux-arm64') { 'class ELF64 .* machine AArch64$' }
+                        elseif ($rel -match 'linux-x64') { 'class ELF64 .* machine x86_64$' }
+                        else { '^class ELF(32|64) ' }
+            if (-not ($out -match $expected)) { throw "ELF architecture mismatch: $rel" }
+            if ([IO.Path]::GetFileName($rel) -eq 'libtempctl.so') {
+                $exports = ($out | Where-Object { $_ -like 'EXPORTS*' }) -join ' '
+                foreach ($name in $tcExports) { if ($exports -cnotmatch "'$name'") { throw "$rel is missing export $name" } }
+            }
             foreach ($l in $out) { $lines += "  $l" }
             $needed = ($out | Where-Object { $_ -like 'NEEDED*' }) -join ' '
-            if ($needed -match 'libstdc|libgcc_s|libm\.') {
+            if ($out | Where-Object { $_ -like 'NEEDED*' -and $_ -ne 'NEEDED libc.so.6' }) {
                 $lines += "  *** UNEXPECTED SHARED-LIBRARY DEPENDENCY: $needed ***"
                 $bad = $true
             } else {
-                $lines += '  -> libc only'
+                $lines += $(if ($needed) { '  -> libc only' } else { '  -> no shared-library dependencies' })
             }
         } else {
-            $lines += '  (python / tools\elfinfo.py not available; ELF report skipped)'
+            throw "ELF inspection requires python and tools\elfinfo.py: $rel"
         }
         $lines += ''
     }

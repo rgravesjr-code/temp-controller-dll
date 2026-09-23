@@ -39,7 +39,7 @@ public sealed class CsvLogger : IDisposable
     public void Dispose() { _w.Dispose(); _fixture?.Dispose(); }
 }
 
-/// <summary>NI-XNET logfile (.ncl): 12-byte header from CanTp_NclHeader, then the raw records of every tick.</summary>
+/// <summary>NI-XNET logfile (.ncl): 12-byte header, then complete messages at the configured CAN interval.</summary>
 public sealed class NclWriter : IDisposable
 {
     readonly FileStream _f;
@@ -51,6 +51,10 @@ public sealed class NclWriter : IDisposable
         _f = new FileStream(path, FileMode.Create, FileAccess.Write);
         _f.Write(CanTpNative.NclHeader());
     }
-    public void Log(Simulation s) { _f.Write(s.Frames); Records += s.Frames.Length / Simulation.RecordSize; }
+    public void Log(Simulation s)
+    {
+        if (!s.CanMessageDue) return;
+        _f.Write(s.Frames); Records += s.Frames.Length / Simulation.RecordSize;
+    }
     public void Dispose() => _f.Dispose();
 }

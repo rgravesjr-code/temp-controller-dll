@@ -25,4 +25,6 @@ sim/**/bin/
 sim/**/obj/
 tests/TempSim.FixtureChecks/bin/
 tests/TempSim.FixtureChecks/obj/
+tests/TempSim.RegressionChecks/bin/
+tests/TempSim.RegressionChecks/obj/
 output/

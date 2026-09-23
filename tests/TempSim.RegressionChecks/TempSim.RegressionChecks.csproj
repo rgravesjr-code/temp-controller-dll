@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../sim/TempSim.Core/TempSim.Core.csproj" />
+    <None Include="../../dbc/tables/TempCtl.json" Link="TempCtl.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../dbc/tempctl.ecd" Link="tempctl.ecd" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Import Project="../../sim/NativeAssets.targets" />
+</Project>

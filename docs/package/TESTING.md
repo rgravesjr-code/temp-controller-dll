@@ -1,7 +1,7 @@
 # Testing Guide - TempCtl v4
 
 Release gate for v4.0.0: `build.bat all` must finish with
-`TempCtl 4.0.0 unit tests: 2186 passed, 0 failed` for both the x64 and the
+`TempCtl 4.0.0 unit tests: 2194 passed, 0 failed` for both the x64 and the
 x86 test executables and build the three Linux targets; `python
 tools\make_tempctl_dbc.py --tables --ecd` must regenerate the DBC, the CanTp
 tables and the ECD without a difference (44-byte payload asserted, ECD read
@@ -17,7 +17,7 @@ the TempSim package.
 
 ## What the gates cover
 
-### `tests\test_main.c` (2186 checks, compiled with `src\tempctl.c`)
+### `tests\test_main.c` (2194 checks, compiled with `src\tempctl.c`)
 
 One test function per rule group of `TEMPCTL-SPEC-v4.0.0.md`; the v3
 change list rows (C1-C22) and scenarios (S1-S15) and the v4 handoff's
@@ -154,29 +154,64 @@ all three and fails if the shipped files differ.
 countdown and accumulator values at exact ticks), every tick packed by
 `CanTp_Pack` and read back by `CanTp_Unpack`; the shipped `tempctl.ecd`
 cross-checked against `TempCtl.json` at start-up; exit 1 on any failed
-expectation or unpack mismatch, 2 on a stale table / ECD or a non-v4
-library. `TempSim.exe --screenshot`: loads the failover scenario, runs
-75 s, renders the window, exits 0 only with all expectations met. Both run
+expectation or unpack mismatch, 2 on a stale table / ECD or unreached
+expectations. A non-v4 library is rejected before running scenarios.
+`TempSim.exe --screenshot`: loads the failover scenario, runs
+75 s, renders the window, and reports checks reached in that snapshot;
+later expectations remain explicitly listed as not yet due. Additional
+WPF gates complete blocked-start, permissive-trip and reset scenarios,
+checking the permissive checkbox against the live input on every tick.
+Both run
 against the same `tempctl` binaries this package ships.
 
 ### On Linux
 
 `linux-arm64\test_tempctl` was run on a Raspberry Pi 5 (aarch64):
-`2186 passed, 0 failed` (`docs\testlogs\pi-test_tempctl-2026-09-22.txt`,
+`2194 passed, 0 failed` (`docs\testlogs\pi-test_tempctl-2026-09-22-review.txt`,
 appended to `TESTLOG.txt`). The `linux-arm64` simulator ran all 29 scenarios
 with 208/208 expectations and produced 60 CSV and `.ncl` files byte-identical
-to the Windows run (TempSim package, `testlogs\pi-sim-2026-09-22.txt`).
+to the Windows run (TempSim package, `testlogs\pi-sim-2026-09-22-review.txt`).
+The 600-second fixture run adds three more byte-identical files, alongside
+30 passing fixture checks and 26 regression checks on each platform.
 
 `linux-x64\test_tempctl` (Intel cRIO) and `linux-armhf\test_tempctl`
 (myRIO-1900) are the same program. The `.so` files are inspected at package
 time with `tools\elfinfo.py` (`DEPENDENCIES.txt`: ELF class, machine,
 exports, imports, SONAME; the ARM library is EABI v5 hard float and imports
 nothing from libc). Whether each was executed on its target in this release
-is stated in `TESTLOG.txt`: a dated log in `docs\testlogs\`
+is stated in `TESTLOG.txt`: a validated dated log in `docs\testlogs\`
 (`crio-test_tempctl-<date>.txt`, `myrio-test_tempctl-<date>.txt`) when the
 owner ran it, otherwise "built and inspected, not executed". The 32-bit ARM
 binary cannot run on the aarch64 Pi (no 32-bit loader), so the myRIO is its
 only execution target.
+
+A filename alone is not evidence of execution. A current target log must
+contain these metadata lines (actual lowercase or uppercase SHA-256 hashes),
+the matching `TempCtl 4.0.0 unit tests: 2194 passed, 0 failed` summary,
+and `exit=0` captured from the test process. The Pi log is required;
+V4-D5 permits the Intel cRIO and myRIO to remain built/inspected only:
+
+```text
+# target: linux-armhf
+# test_sha256: <sha256 of the test_tempctl being packaged>
+# library_sha256: <sha256 of the libtempctl.so being packaged>
+```
+
+Use `linux-x64` or `linux-arm64` for those targets. Also record model,
+image/OS, date and command. Old or hash-mismatched logs remain historical
+and cannot mark rebuilt binaries executed; a matching failed/incomplete
+log blocks packaging. This certifies execution of the test executable;
+loading the shared library through LabVIEW remains a separate owner gate.
+
+`tests/TempSim.RegressionChecks` covers event timestamps, stopped-time
+exclusion, companion clocks, noise bounds/mean, truncated runs, table
+identity and missing/corrupt ECD rejection, CAN ordering and paced sends.
+It also compares all diagnostics over 64,000 samples on 16 concurrent
+native zones with a serial reference (handoff 13.7.4).
+The 30 fixture checks and these regressions run against the exact Core and
+native binaries being packaged via `scripts/verify_sim_regressions.ps1`.
+`powershell -File tests/test_release_gates.ps1` exercises oracle failure
+and target-log validation, including stale hashes and failed/incomplete logs.
 
 ### Owner-executed gates (not automated here)
 

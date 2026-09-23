@@ -10,7 +10,7 @@ Two products in one repository, released as separate packages:
   disagreement check, time-qualified relay transitions (no chatter), and a
   per-relay DO feedback check. One source tree builds `tempctl.dll`
   (Windows x64 and x86) and `libtempctl.so` (Linux x86_64 for the
-  cRIO-904x/905x/906x, 32-bit ARM for the myRIO-1900, aarch64 for the
+  cRIO-904x/905x, 32-bit ARM for the myRIO-1900, aarch64 for the
   Raspberry Pi). No runtime
   dependencies. **Signals in, signals out**: no CAN inside; its diagnostics
   array is a DBC / ECD message (`dbc/tempctl.dbc`, `dbc/tempctl.ecd`, PGN
@@ -32,7 +32,7 @@ TempCtl release.
 ```
 src/tempctl.h            public API: TcInit / TcStart / TcStop / TcCheckTemp / TcReset / TcGetDiag (+ TcVersion, TcSetupCount, TcDiagCount)
 src/tempctl.c            controller state machine, 16 zone slots, static memory only
-tests/test_main.c        2186 unit checks by rule number (R1..R10, C1..C22, S1..S15, handoff 13.x.y), compiled with the source
+tests/test_main.c        2194 unit checks by rule number (R1..R10, C1..C22, S1..S15, handoff 13.x.y), compiled with the source
 tests/oracle_test.py     ctypes: Init/Start/CheckTemp/Stop/GetDiag -> CanTp_Pack (table slot + ECD slot) -> BAM, bit-for-bit vs cantools
 tools/make_tempctl_dbc.py   generates dbc/tempctl.dbc over the TC_DIAG_* array, (via CanTp's dbc2tables) dbc/tables/ and (via ecdflat) dbc/tempctl.ecd
 dbc/                     tempctl.dbc + tempctl.ecd + CanTp tables (JSON, CSV for LabVIEW, C header)
@@ -48,7 +48,7 @@ sim/TempSim.Core         plant / profile / sensor / relay models, P/Invoke, scen
 sim/TempSim.Cli          console simulator (win-x64, linux-x64, linux-arm64)
 sim/TempSim.Wpf          Windows simulator with graph, Start/Stop/Run permissive, lifecycle line, countdown bars, lamps, live setup, fault injection, frames panel
 sim/SIMULATOR.md, sim/CHANGELOG.md, sim/Directory.Build.props (TempSim version), sim/testlogs/ (Pi runs)
-build.bat                tempctl for every target (win x64/x86, linux-x64, linux-armhf, linux-arm64) + the 2186-check gates
+build.bat                tempctl for every target (win x64/x86, linux-x64, linux-armhf, linux-arm64) + the 2194-check gates
 build_sim.bat            publishes build/sim/{win-x64,linux-x64,linux-arm64} + the scenario and screenshot gates
 package_dist.bat         dist/TempCtl_vX.Y.Z      (controller package, a few MB)
 package_sim.bat          dist/TempSim_vX.Y.Z_<rid> (simulator packages, one per target)
@@ -64,7 +64,7 @@ for the Linux cross-builds (`..\tools\zig-x86_64-windows-*\zig.exe` or
 `cantools` for the DBC and the oracle.
 
 ```bat
-build.bat all                                :: dll x64+x86, 2186-check gates, .so linux-x64 + linux-armhf + linux-arm64
+build.bat all                                :: dll x64+x86, 2194-check gates, .so linux-x64 + linux-armhf + linux-arm64
 python tools\make_tempctl_dbc.py --tables --ecd  :: dbc\tempctl.dbc + dbc\tables\ + dbc\tempctl.ecd
 python tests\oracle_test.py                  :: ALL OK
 package_dist.bat 4.0.0 [zip-password]        :: dist\TempCtl_v4.0.0*          (controller)
@@ -104,10 +104,15 @@ integration: `docs/package/TEMPCTL-v4.0.0-API-AND-LABVIEW-GUIDE.md`, tables:
 
 ## Deploy to the cRIO / myRIO
 
+The commands below are for **Intel x86-64 cRIO-904x/905x**. cRIO-906x is
+32-bit ARM and must not use `linux-x64`; validate its exact image and ABI
+before considering the myRIO `linux-armhf` build. TempSim's Linux targets
+are x64 and ARM64 only.
+
 ```
 scp build\linux-x64\libtempctl.so third_party\cantp\linux-x64\libcantp.so admin@<crio>:/usr/local/lib/
 scp build\linux-x64\test_tempctl admin@<crio>:/tmp/
-ssh admin@<crio> "chmod 755 /usr/local/lib/lib*.so /tmp/test_tempctl && /tmp/test_tempctl"   -> 2186 passed, 0 failed
+ssh admin@<crio> "chmod 755 /usr/local/lib/lib*.so /tmp/test_tempctl && /tmp/test_tempctl"   -> 2194 passed, 0 failed
 ```
 
 The myRIO-1900 uses the `linux-armhf` files (32-bit ARM, hard float) and the

@@ -14,6 +14,15 @@ namespace TempSim.Core;
 /// </summary>
 public sealed class MessageTable
 {
+    static readonly Lazy<MessageTable> s_contract = new(() =>
+    {
+        using var stream = typeof(MessageTable).Assembly.GetManifestResourceStream("TempSim.TempCtl.json")
+            ?? throw new InvalidDataException("The simulator's embedded TempCtl layout is missing.");
+        var t = JsonSerializer.Deserialize<MessageTable>(stream) ?? throw new InvalidDataException("Empty embedded TempCtl layout.");
+        t.Source = "embedded TempCtl v4 layout";
+        t.ValidateShape();
+        return t;
+    });
     [JsonPropertyName("message")] public string Message { get; set; } = "";
     [JsonPropertyName("msgdef")] public double[] MsgDef { get; set; } = Array.Empty<double>();
     [JsonPropertyName("sigdefs")] public double[][] SigDefs { get; set; } = Array.Empty<double[]>();
@@ -36,10 +45,37 @@ public sealed class MessageTable
     {
         var t = JsonSerializer.Deserialize<MessageTable>(File.ReadAllText(jsonPath))
                 ?? throw new InvalidDataException("empty table " + jsonPath);
-        if (t.MsgDef.Length != CanTpNative.MsgDefCols) throw new InvalidDataException("msgdef must have 8 columns");
-        foreach (var r in t.SigDefs) if (r.Length != CanTpNative.SigDefCols) throw new InvalidDataException("sigdef rows must have 8 columns");
         t.Source = Path.GetFileName(jsonPath);
+        t.ValidateContract();
         return t;
+    }
+
+    void ValidateShape()
+    {
+        if (MsgDef == null || MsgDef.Length != CanTpNative.MsgDefCols) throw new InvalidDataException("msgdef must have 8 columns");
+        if (SigDefs == null || Signals == null || Units == null || Signals.Length != SigDefs.Length || Units.Length != SigDefs.Length)
+            throw new InvalidDataException("Signal rows, names and units must have matching lengths.");
+        foreach (var r in SigDefs)
+            if (r == null || r.Length != CanTpNative.SigDefCols) throw new InvalidDataException("sigdef rows must have 8 columns");
+    }
+
+    /// <summary>Validate order and every wire definition against the generated layout embedded in this build.</summary>
+    public void ValidateContract()
+    {
+        ValidateShape();
+        if (SignalCount != TcConst.DiagCount)
+            throw new InvalidDataException($"{Source} has {SignalCount} signals; TempCtl v{TcConst.Major} requires {TcConst.DiagCount} (v3 has 25). Stale table.");
+        var diff = DifferenceFrom(s_contract.Value);
+        if (diff != null) throw new InvalidDataException($"{Source} is not this simulator's TempCtl v4 layout: {diff}. Regenerate with tools/make_tempctl_dbc.py --tables --ecd.");
+    }
+
+    /// <summary>Both applications require and cross-check the shipped JSON/ECD pair before loading any override.</summary>
+    public static MessageTable LoadShipped(string? tablePath = null, string? directory = null)
+    {
+        directory ??= AppContext.BaseDirectory;
+        var json = LoadJson(Path.Combine(directory, "TempCtl.json"));
+        CheckShippedEcd(json, Path.Combine(directory, "tempctl.ecd"));
+        return tablePath == null ? json : Load(tablePath);
     }
 
     /// <summary>The bundled TempCtl table (dbc/tables/TempCtl.json copied next to the executable).</summary>
@@ -50,6 +86,7 @@ public sealed class MessageTable
     /// <summary>Load into a CanTp slot; source address override replaces the DBC's 0xFE placeholder.</summary>
     public void Define(int slot, int sourceAddress = -1)
     {
+        ValidateContract();
         NativeLoader.Register();
         int rc;
         if (Flat != null)
@@ -82,12 +119,15 @@ public sealed class MessageTable
     /// </summary>
     public string? DifferenceFrom(MessageTable other)
     {
+        ValidateShape(); other.ValidateShape();
+        if (Message != other.Message || Transport != other.Transport) return "message name or transport differs";
         if (SignalCount != other.SignalCount) return $"{Source} has {SignalCount} signals, {other.Source} has {other.SignalCount}";
         for (int k = 0; k < CanTpNative.MsgDefCols; k++)
             if (k != 4 && MsgDef[k] != other.MsgDef[k]) return $"msgdef column {k}: {MsgDef[k]} vs {other.MsgDef[k]}";   // column 4 = SA placeholder / override
         for (int i = 0; i < SignalCount; i++)
         {
             if (!string.Equals(Signals[i], other.Signals[i], StringComparison.Ordinal)) return $"signal {i}: {Signals[i]} vs {other.Signals[i]} (channel order)";
+            if (Units[i] != other.Units[i]) return $"{Signals[i]} unit: {Units[i]} vs {other.Units[i]}";
             for (int k = 0; k < CanTpNative.SigDefCols; k++)
                 if (SigDefs[i][k] != other.SigDefs[i][k]) return $"{Signals[i]} column {k}: {SigDefs[i][k]} vs {other.SigDefs[i][k]}";
         }
@@ -126,7 +166,7 @@ public sealed class MessageTable
             }
             r.U8();
             int end = r.Pos;
-            if (!string.Equals(name, message, StringComparison.Ordinal) && !(count == 1)) continue;
+            if (!string.Equals(name, message, StringComparison.Ordinal)) continue;
             uint ident = msgId & 0x1FFFFFFF;
             bool ext = extended != 0 || msgId >= 0x80000000u || ident > 0x7FF;
             bool pdu1 = ext && ((ident >> 16) & 0xFF) < 0xF0;
@@ -145,6 +185,7 @@ public sealed class MessageTable
                 Flat = plain.AsSpan(start, end - start).ToArray(),
                 Source = Path.GetFileName(path),
             };
+            t.ValidateContract();
             return t;
         }
         throw new InvalidDataException($"{path}: no message '{message}' among {count}");
@@ -193,7 +234,7 @@ public sealed class MessageTable
     public static string CheckShippedEcd(MessageTable jsonTable, string? ecdPath = null)
     {
         ecdPath ??= DefaultEcdPath;
-        if (ecdPath == null) return "tempctl.ecd: not present next to the executable (CanTp defined from TempCtl.json only)";
+        if (ecdPath == null || !File.Exists(ecdPath)) throw new InvalidDataException("Required tempctl.ecd is missing next to the executable.");
         var ecd = LoadEcd(ecdPath);
         var diff = ecd.DifferenceFrom(jsonTable);
         if (diff != null) throw new InvalidOperationException($"{Path.GetFileName(ecdPath)} does not match {jsonTable.Source}: {diff}. Regenerate both with tools\\make_tempctl_dbc.py --tables --ecd.");

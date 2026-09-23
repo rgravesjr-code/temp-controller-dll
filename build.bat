@@ -1,7 +1,7 @@
 @echo off
 setlocal
 :: build.bat - tempctl.dll (x64 + x86, MSVC) + test exes, then libtempctl.so for
-:: linux-x64 (cRIO-904x/905x/906x), linux-armhf (myRIO-1900, 32-bit ARM Cortex-A9)
+:: linux-x64 (cRIO-904x/905x), linux-armhf (myRIO-1900, 32-bit ARM Cortex-A9)
 :: and linux-arm64 (Raspberry Pi 4/5) via zig.
 :: Usage: build.bat [all|win|test|linux]   (default all)
 set "ROOT=%~dp0"

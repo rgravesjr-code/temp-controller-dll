@@ -2,7 +2,7 @@
 setlocal
 :: build_sim.bat - publish the TempSim simulator (self-contained .NET 10) for every target:
 ::   build\sim\win-x64\      TempSim.exe (WPF) + TempSim.Cli.exe
-::   build\sim\linux-x64\    TempSim.Cli  (cRIO-904x/905x/906x class x86_64 Linux)
+::   build\sim\linux-x64\    TempSim.Cli  (cRIO-904x/905x class x86_64 Linux)
 ::   build\sim\linux-arm64\  TempSim.Cli  (Raspberry Pi 4/5)
 :: Run build.bat all first (tempctl binaries); cantp comes from third_party\cantp. Usage: build_sim.bat [all|win|linux|shot]
 set "ROOT=%~dp0"
@@ -33,6 +33,8 @@ if /i "%MODE%"=="linux" goto :done
 
 :shot
 echo === headless checks (win-x64) ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\verify_sim_regressions.ps1" -PublishDir "%OUT%\win-x64" -OutDir "%OUT%\regression-gates"
+if errorlevel 1 ( echo ERROR: simulator regression gates failed & exit /b 1 )
 "%OUT%\win-x64\TempSim.Cli.exe" --scenario all --out "%OUT%\win-x64-out" --quiet
 if errorlevel 1 ( echo ERROR: TempSim.Cli reported unpack mismatches or failed scenario expectations & exit /b 1 )
 "%OUT%\win-x64\TempSim.exe" --screenshot "%OUT%\tempsim-screenshot.png" --scenario failover --seconds 75

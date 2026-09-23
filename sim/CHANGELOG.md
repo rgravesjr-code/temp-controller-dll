@@ -15,6 +15,23 @@ statuses 6..9 and 17, warning 8). Embeds tempctl 4.0.0 and cantp 1.3.1.
 **Not compatible with a v3 controller**: the simulator refuses a library
 whose major version is not 4 and a table with other than 28 signals.
 
+- Pre-release review corrections: events use their named sample time after
+  the preceding plant interval; Reset/Start no longer charge a stopped
+  interval. The reset scenario now checks expiry at 22.0 s (208 total
+  expectations retained). WPF preserves a scenario's initial permissive
+  and synchronizes the checkbox with scripted changes.
+- Symmetric noise is now bounded by its configured amplitude with zero
+  mean. Both applications validate the required JSON/ECD pair against the
+  generated layout embedded in the build, including explicit ECD overrides.
+- CAN logs/transmission emit one complete message every 1000 ms by default,
+  independently of per-tick pack/unpack checks. Frames retain 50 ms spacing;
+  live transmission honors that spacing without blocking controller ticks.
+  `--can` implies real-time pacing; overlapping transfers are rejected.
+- Truncated CLI runs report remaining expectations and exit 2 (INCOMPLETE).
+  Screenshot reports identify a snapshot and its not-yet-due checks.
+  Build/package gates now include fixture checks, simulator regressions,
+  16-thread native-zone isolation and lifecycle WPF scenarios.
+
 - Lifecycle: a run does `TcInit` then `TcStart` (`StartOnInit`, default
   true, so every earlier scenario still controls from t = 0); `Start`,
   `Stop` and the live `Run permissive` are operator controls in the WPF
@@ -44,8 +61,12 @@ whose major version is not 4 and a table with other than 28 signals.
   `OperatingConditionTimeout`.
 - Gates: Windows 208/208, screenshot rendered; Raspberry Pi linux-arm64
   208/208 with every CSV / .ncl byte-identical to Windows
-  (`testlogs\pi-sim-2026-09-22.txt`). The fixture model (2.1.0-2.2.1) is
-  unchanged; its Pi validation remains pending.
+  (`testlogs\pi-sim-2026-09-22-review.txt`, superseding the earlier run).
+  Post-review validation includes 26 regression checks and 30 fixture
+  checks on Windows/Pi, plus a 600-second fixture run with sensor noise:
+  all 63 output files match byte for byte. This completes the previously
+  pending Pi fixture validation for these tested settings; the fixture
+  equations themselves are unchanged. Live SocketCAN was not re-run.
 
 ## v2.2.1 - 2026-09-20
 

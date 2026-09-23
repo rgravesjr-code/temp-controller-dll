@@ -6,7 +6,8 @@ namespace TempSim.Core;
 
 /// <summary>
 /// One closed loop: plant (or scripted profile) -> sensors -> TcCheckTemp -> relays -> plant, with the zone's
-/// diagnostics array (TcGetDiag) packed by CanTp into NI-XNET raw frame records (one J1939 BAM per tick), unpacked
+/// diagnostics array (TcGetDiag) packed and unpacked by CanTp every tick, with J1939 BAM transmission/logging on
+/// a separate message schedule. The records are unpacked
 /// again as the receive-side proof, and optionally written to a real Linux CAN interface. Deterministic for a given
 /// config + scenario.
 ///
@@ -54,6 +55,8 @@ public sealed class Simulation : IDisposable
     /// <summary>The raw frame records of the last tick (CanTp_Pack output).</summary>
     public byte[] Frames { get; }
     public int FrameCount { get; }
+    /// <summary>True on a sample scheduled for logging/transmission, independent of per-tick pack/unpack verification.</summary>
+    public bool CanMessageDue { get; private set; }
     /// <summary>The values CanTp_Unpack recovered from <see cref="Frames"/> (receive side).</summary>
     public double[] Unpacked { get; }
     public int UnpackMismatches { get; private set; }
@@ -65,6 +68,7 @@ public sealed class Simulation : IDisposable
 
     readonly SocketCan? _bus;
     readonly List<Action<Simulation>> _observers = new();
+    long _nextCanMs;
 
     public Simulation(SimConfig config, MessageTable? table = null, int zone = 0)
     {
@@ -72,11 +76,12 @@ public sealed class Simulation : IDisposable
         Config = config;
         if (config.PeriodMs < 1 || config.PeriodMs > 10000) throw new ArgumentException("PeriodMs must be 1..10000.");
         if (config.Fixture.Enabled) config.Fixture.Validate();
-        Table = table ?? MessageTable.Load(MessageTable.DefaultPath);
-        if (Table.SignalCount != TcConst.DiagCount)
-            throw new InvalidOperationException($"{Table.Source} has {Table.SignalCount} signals, the controller has {TcConst.DiagCount} diagnostics: stale table (a TempCtl v3 table has 25 rows). Regenerate with tools\\make_tempctl_dbc.py --tables --ecd.");
+        Table = table ?? MessageTable.LoadShipped();
+        Table.ValidateContract();
         Table.Define(zone, Config.Can.SourceAddress);                       // CanTp slot = zone
         FrameCount = CanTpNative.CanTp_FrameCount(zone);
+        if (config.Can.SpacingMs < 0 || config.Can.MessagePeriodMs <= (FrameCount - 1L) * config.Can.SpacingMs)
+            throw new ArgumentException("Can.MessagePeriodMs must exceed the complete message's frame span; SpacingMs must be nonnegative.");
         Frames = new byte[CanTpNative.CanTp_OutputSize(zone)];
         Unpacked = new double[TcConst.DiagCount];
 
@@ -104,6 +109,7 @@ public sealed class Simulation : IDisposable
     public void Init()
     {
         Tick = 0; Ticks = 0; UnpackMismatches = 0; ClockOffsetMs = 0;
+        _nextCanMs = 0; CanMessageDue = false;
         SeenStatuses.Clear(); Trace.Clear();
         Heater.Clear(); Cooler.Clear();
         Fixture = new FixtureModel();
@@ -192,24 +198,47 @@ public sealed class Simulation : IDisposable
         Temp2Raw = Sensor2.Read(truth2, dt, Rng);
     }
 
-    /// <summary>Advance one period.</summary>
-    public void Step()
+    /// <summary>
+    /// Advance the plant and all zone clocks to the next sample, apply events at that timestamp,
+    /// then read inputs and evaluate control. An event cannot change the preceding plant interval.
+    /// </summary>
+    public void Step(Action<Simulation>? beforeCheck = null)
+    {
+        BeginStep();
+        beforeCheck?.Invoke(this);
+        FinishStep();
+    }
+
+    void BeginStep()
     {
         double dt = Config.PeriodMs / 1000.0;
         Tick++;
         // plant moves under the relay states decided last tick
         if (Config.Fixture.Enabled) Fixture.Step(dt, Plant, Config.Fixture, HeaterOn, CoolerOn, Config.Controller.TempUnits);
         else Plant.Step(dt, HeaterOn, CoolerOn);
-        ReadSensors(dt);
+        Companion?.BeginStep();
+    }
+
+    void FinishStep()
+    {
+        ReadSensors(Config.PeriodMs / 1000.0);
         // the DO read-back reflects the physical state reached after the last command; the permissive is the live input
         Ctl.CheckTemp(NowMs, Temp1Raw, Temp2Raw, Heater.Contact, Cooler.Contact, RunPermissive);
         HeaterOn = Heater.Apply(Ctl.DoHeater);
         CoolerOn = Cooler.Apply(Ctl.DoCooler);
         PackAndVerify();
         Ticks++;
+        long sampleMs = Tick * (long)Config.PeriodMs;
+        CanMessageDue = sampleMs >= _nextCanMs;
+        if (CanMessageDue)
+        {
+            // Base the next transfer on this sample, so periods not divisible by the control step cannot overlap.
+            _nextCanMs = sampleMs + Config.Can.MessagePeriodMs;
+            _bus?.SendPaced(Frames);
+        }
         SeenStatuses.Add(Ctl.Status);
         Trace.Add((Ctl.Status, Ctl.Warning, Ctl.DoHeater, Ctl.DoCooler));
-        Companion?.Step();
+        Companion?.FinishStep();
         foreach (var o in _observers) o(this);
     }
 
@@ -230,7 +259,6 @@ public sealed class Simulation : IDisposable
             double expect = hi > lo ? Math.Clamp(v, lo, hi) : v;           // the U16 ms signals saturate at 64255 on the wire
             if (Math.Abs(Unpacked[i] - expect) > res * 0.5 + 1e-6) UnpackMismatches++;
         }
-        _bus?.Send(Frames);
     }
 
     public void Dispose() { _bus?.Dispose(); Companion?.Dispose(); }

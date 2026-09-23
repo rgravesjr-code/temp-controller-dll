@@ -486,7 +486,9 @@ TC_API int32_t TcStop(int32_t zone, uint32_t nowMs,
 
     z->started = 0;
     z->doHeater = z->doCooler = z->prevHeater = z->prevCooler = 0;
-    z->lastMs = nowMs;
+    /* Stop rebases control time, but must not discard wall time from the
+     * hourly history (including repeated Stop calls while already idle). */
+    rings_age(z, elapsed_ms(z, nowMs));
     clear_transient_conditions(z);                                         /* warnings 1..5 gone */
     if (z->life == LIFE_PENDING || z->life == LIFE_TRIPPED) {
         z->ocCond = COND_NONE; z->ocEl = 0;                                /* escalation cancelled, cause kept */

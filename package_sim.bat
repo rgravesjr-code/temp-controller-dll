@@ -65,6 +65,8 @@ mkdir "%GATE%"
     echo.
     echo ============ TempSim.Cli, all scenarios ^(win-x64^) ============
 ) > "%GATE%\TESTLOG.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\verify_sim_regressions.ps1" -PublishDir "%SIMBUILD%\win-x64" -OutDir "%GATE%\regressions" >> "%GATE%\TESTLOG.txt" 2>&1
+if errorlevel 1 ( echo ERROR: simulator regression gates failed. & exit /b 1 )
 "%SIMBUILD%\win-x64\TempSim.Cli.exe" --scenario all --out "%GATE%\out" --quiet >> "%GATE%\TESTLOG.txt" 2>&1
 if %ERRORLEVEL% neq 0 ( echo ERROR: simulator CLI gate failed ^(unpack mismatches or failed scenario expectations^). & exit /b 1 )
 echo. >> "%GATE%\TESTLOG.txt"
